@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from repodoctor.schemas import Edit
+from repodoctor.tools.paths import safe_resolve
 
 @dataclass
 class PatchResult:
@@ -17,14 +18,14 @@ class _File:
 def _norm(s: str) -> str:
     return s.replace("\r\n", "\n")
 
-def _resolve(root: Path, rel: str) -> Path | None:
-    """Resolve rel under root; None if it escape root or touches .git."""
-    p = (root / rel).resolve()
-    if not p.is_relative_to(root):
-        return None
-    if ".git" in p.relative_to(root).parts:
-        return None
-    return p
+# def _resolve(root: Path, rel: str) -> Path | None:
+#     """Resolve rel under root; None if it escape root or touches .git."""
+#     p = (root / rel).resolve()
+#     if not p.is_relative_to(root):
+#         return None
+#     if ".git" in p.relative_to(root).parts:
+#         return None
+#     return p
 
 def _load(path: Path) -> _File:
     raw = path.read_bytes().decode("utf-8")
@@ -38,7 +39,7 @@ def apply_edits(root: Path, edits: list[Edit]) -> PatchResult:
 
     for i, e in enumerate(edits, 1):
         label = f"edit {i} ({e.path})"
-        path = _resolve(root, e.path)
+        path = safe_resolve(root, e.path)
         if path is None:
             errors.append(f"{label}: path is outside the repository or inside .git")
             continue
