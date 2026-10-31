@@ -82,3 +82,23 @@ def test_failing_tests_are_reported(tmp_path):
         sb.lock_network()
         r = sb.run_tests(info)
     assert r.exit_code == 1 and "1 failed" in r.output
+
+def test_dead_container_raises_clear_error(tmp_path):
+    from repodoctor.tools.sandbox import SandboxError, _docker
+
+    with Sandbox(tmp_path) as sb:
+        _docker("kill", sb.name)
+        with pytest.raises(SandboxError, match="not running"):
+            sb.run("echo hi", 10)
+
+
+@pytest.mark.slow
+def test_run_suite_reports_failing_test_ids(tmp_path):
+    info = make_project(tmp_path, failing=True)
+    with Sandbox(tmp_path) as sb:
+        assert sb.install(info).ok
+        sb.lock_network()
+        result, report = sb.run_suite(info)
+    assert report is not None
+    assert report.failed == 1
+    assert any(k.endswith("::test_add") for k in report.failing)

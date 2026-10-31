@@ -105,7 +105,7 @@ def inspect_repo(url: str) -> None:
 
 @app.command()
 def smoke(url: str) -> None:
-    """Run the repo's own test suite in the sandbox (baseline check)."""
+    """Run the repo's own test suite in the sandbox and record the baseline."""
     ref = _resolve_issue(url)
     dest, info = _clone_and_detect(ref)
     if not info.supported:
@@ -127,15 +127,31 @@ def smoke(url: str) -> None:
                 raise typer.Exit(3)
             sb.lock_network()
             typer.echo("Running tests (network off) ...")
-            r = sb.run_tests(info, timeout=s.sandbox_timeout_s)
+            r, report = sb.run_suite(info, timeout=s.sandbox_timeout_s)
     except SandboxError as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
 
-    typer.echo(r.output)
-    status = "TIMEOUT" if r.timed_out else ("PASS" if r.ok else f"FAIL (exit {r.exit_code})")
-    typer.echo(f"\nResult: {status} in {r.duration_s:.0f}s")
-    raise typer.Exit(0 if r.ok else 1)
+    if report is None:
+        typer.echo(r.output)
+        why = "timeout" if r.timed_out else f"exit {r.exit_code}"
+        typer.echo(f"\nERROR   no test report produced ({why}); "
+                   "pytest may have crashed during collection")
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"Baseline: {report.total} tests | {report.passed} passed, {report.failed} failed, "
+        f"{report.errors} errors, {report.skipped} skipped | {r.duration_s:.0f}s"
+    )
+    if report.clean:
+        typer.echo("Result: CLEAN baseline")
+        return
+    typer.echo(f"Result: {len(report.failing)} pre-existing failures "
+               "(the agent will ignore these)")
+    for test_id, msg in list(report.failing.items())[:10]:
+        typer.echo(f"  - {test_id}: {msg}")
+    if len(report.failing) > 10:
+        typer.echo(f"  ... and {len(report.failing) - 10} more")
 
 
 if __name__ == "__main__":
