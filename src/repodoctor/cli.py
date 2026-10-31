@@ -5,7 +5,10 @@ import typer
 from dotenv import load_dotenv
 
 from repodoctor.config import get_settings
+from repodoctor.demo import make_demo
 from repodoctor.graph import build_hello_graph
+from repodoctor.models import ModelConfigError, make_chat_model, probe, role_specs
+from repodoctor.runner import FixRequest, RunnerError, parse_issue_file, run_fix
 from repodoctor.tools.issue_ref import (
     InvalidIssueUrl,
     IssueRef,
@@ -76,8 +79,36 @@ def doctor() -> None:
         typer.echo(f"{'OK     ' if value else 'MISSING'} {label}")
 
     typer.echo(f"INFO    DRY_RUN={s.dry_run}")
+    typer.echo(f"INFO    explore={s.llm_explore}  fix={s.llm_fix}")
+    typer.echo(f"INFO    fallbacks={s.fallback_specs or '-'}")
     if not s.dry_run:
         typer.echo("WARN    DRY_RUN is off: the agent can push branches and open PRs")
+
+
+@app.command("check-llm")
+def check_llm() -> None:
+    """Test every configured model (credentials, model id, tool calling, structured output)."""
+    s = get_settings()
+    specs: list[str] = []
+    for role in ("explore", "fix"):
+        for spec in role_specs(role, s):
+            if spec not in specs:
+                specs.append(spec)
+
+    all_ok = True
+    for spec in specs:
+        try:
+            model = make_chat_model(spec, s)
+        except ModelConfigError as e:
+            typer.echo(f"SKIP    {spec}: {e}")
+            continue
+        for check, problem in probe(model).items():
+            if problem is None:
+                typer.echo(f"OK      {spec} [{check}]")
+            else:
+                all_ok = False
+                typer.echo(f"FAIL    {spec} [{check}]: {problem}")
+    raise typer.Exit(0 if all_ok else 1)
 
 
 @app.command("check-issue")
@@ -152,6 +183,58 @@ def smoke(url: str) -> None:
         typer.echo(f"  - {test_id}: {msg}")
     if len(report.failing) > 10:
         typer.echo(f"  ... and {len(report.failing) - 10} more")
+
+
+@app.command("make-demo")
+def make_demo_cmd() -> None:
+    """Create a tiny repo with one seeded bug for a first end-to-end run."""
+    root = get_settings().work_dir.resolve().parent / "demo"
+    demo = make_demo(root)
+    typer.echo(f"Created {demo.repo_dir}\n")
+    typer.echo("Run the agent on it:")
+    typer.echo(
+        f'  uv run repodoctor fix --repo-dir "{demo.repo_dir}" '
+        f'--issue-file "{demo.issue_file}" --test {demo.test_id}'
+    )
+
+
+@app.command()
+def fix(
+    repo_dir: Path = typer.Option(
+        ..., "--repo-dir", exists=True, file_okay=False,
+        help="Local git repo containing the bug (changes must be committed)",
+    ),
+    issue_file: Path = typer.Option(
+        ..., "--issue-file", exists=True, dir_okay=False,
+        help="Markdown file: first line is the title, the rest is the body",
+    ),
+    test: list[str] = typer.Option(
+        ..., "--test", help="pytest node id that must pass after the fix (repeatable)"
+    ),
+) -> None:
+    """Run the fix loop on a local repo."""
+    settings = get_settings()
+    try:
+        title, body = parse_issue_file(issue_file.read_text(encoding="utf-8"))
+        final = run_fix(FixRequest(repo_dir, title, body, test), settings)
+    except (RunnerError, ModelConfigError, SandboxError, GitError, ValueError) as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+
+    typer.echo(f"Relevant files: {', '.join(final.get('relevant_files', [])) or '-'}")
+    typer.echo(f"Hypothesis:     {final.get('hypothesis', '-')}")
+    typer.echo(f"Attempts:       {final.get('attempts', 0)}/{settings.max_attempts}")
+
+    if final.get("error"):
+        typer.echo(f"\nERROR   {final['error']}")
+        raise typer.Exit(1)
+    if final.get("diff"):
+        typer.echo("\n" + final["diff"])
+    if final.get("success"):
+        typer.echo("RESULT: SUCCESS (nothing was pushed; the diff above is the fix)")
+        return
+    typer.echo(f"RESULT: FAILED\nLast feedback:\n{final.get('feedback', '')}")
+    raise typer.Exit(1)
 
 
 if __name__ == "__main__":

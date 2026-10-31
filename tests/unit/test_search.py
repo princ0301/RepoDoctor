@@ -11,6 +11,7 @@ from repodoctor.tools.search import (
     grep,
     list_dir,
     read_file,
+    read_raw,
 )
 
 APP = (
@@ -256,3 +257,15 @@ def test_list_dir_empty_directory(root):
 def test_list_dir_truncates(root):
     out = list_dir(root, max_entries=2)
     assert "more entries not shown" in out
+
+def test_read_raw_returns_plain_text_without_numbers(root):
+    assert read_raw(root, "app.py") == APP
+
+
+def test_read_raw_normalizes_crlf(root):
+    assert read_raw(root, "crlf.txt") == "a\nb\n"
+
+
+def test_read_raw_rejects_binary(root):
+    with pytest.raises(SearchError, match="binary"):
+        read_raw(root, "data.bin")

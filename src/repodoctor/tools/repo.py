@@ -73,15 +73,28 @@ def clone_repo(url: str, dest: Path, depth: int = 1) -> Path:
 def clone_issue_repo(ref: IssueRef, dest: Path) -> Path:
     return clone_repo(f"https://github.com/{ref.full_name}.git", dest)
 
-def get_diff(root: Path) -> str:
-    """Unified diff of all changes vs HEAD, including new files."""
-    run_git("add", "-A", cwd=root)
-    return run_git("diff", "--cached", "--no-color", cwd=root)
+def get_diff(root: Path, paths: list[str] | None = None) -> str:
+    """Unified diff vs HEAD of `paths` (default: everything), including new files."""
+    run_git("add", "-A", "--", *(paths or ["."]), cwd=root)
+    spec = ["--", *paths] if paths else []
+    return run_git("diff", "--cached", "--no-color", *spec, cwd=root)
 
-def reset_changes(root: Path) -> None:
-    """Throw away every change and untracked file (used between retries)."""
+# def reset_changes(root: Path) -> None:
+#     """Throw away every change and untracked file (used between retries)."""
+#     run_git("reset", "--hard", "HEAD", cwd=root)
+#     run_git("clean", "-fd", cwd=root)
+
+def list_untracked(root: Path) -> set[str]:
+    out = run_git("ls-files", "--others", "--exclude-standard", "-z", cwd=root)
+    return {p for p in out.split("\0") if p}
+
+
+def reset_to_clean(root: Path, keep_untracked: set[str]) -> None:
+    """Undo all edits. Untracked files that existed in `keep_untracked` are left alone,
+    so build artifacts from the install step survive between retries."""
     run_git("reset", "--hard", "HEAD", cwd=root)
-    run_git("clean", "-fd", cwd=root)
+    for rel in list_untracked(root) - set(keep_untracked):
+        (root / rel).unlink(missing_ok=True)
 
 @dataclass
 class ProjectInfo:

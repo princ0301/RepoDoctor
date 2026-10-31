@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # extra="ignore": .env also holds LANGSMITH_* vars that we don't model here
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # --- LLM providers ---
+    # --- API keys ---
     google_api_key: str = ""
     openrouter_api_key: str = ""
 
@@ -17,19 +17,32 @@ class Settings(BaseSettings):
     allowed_repos: str = ""        # comma-separated "owner/repo,owner2/repo2"
     dry_run: bool = True           # True = never push or open a PR
 
-    # --- Limits ---
+    # --- Models: "provider:model", provider is "google" or "openrouter" ---
+    llm_explore: str = "openrouter:nvidia/nemotron-3.5-super-vl:free"
+    llm_fix: str = "openrouter:nvidia/nemotron-3.5-super-vl:free"
+    llm_fallbacks: str = "openrouter:nvidia/nemotron-3.5-super-vl:free"
+    llm_timeout_s: int = 120
+
+    # --- Agent limits ---
     max_attempts: int = 3          # fix/verify retries
+    explore_max_steps: int = 10    # tool-call rounds in the explorer
+    fix_context_chars: int = 80_000
+
+    # --- Sandbox ---
     sandbox_timeout_s: int = 300
+    sandbox_memory: str = "2g"
+    sandbox_cpus: float = 2.0
 
     # --- Paths ---
     work_dir: Path = Path(".repodoctor/work")   # where repos get cloned (gitignored)
 
-    sandbox_memory: str = "2g"
-    sandbox_cpus: float = 2.0
-
     @property
     def allowed_repo_list(self) -> list[str]:
         return [r.strip() for r in self.allowed_repos.split(",") if r.strip()]
+
+    @property
+    def fallback_specs(self) -> list[str]:
+        return [s.strip() for s in self.llm_fallbacks.split(",") if s.strip()]
 
 
 def get_settings() -> Settings:

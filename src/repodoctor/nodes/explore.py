@@ -1,0 +1,91 @@
+from pathlib import Path
+
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import BaseTool
+
+from repodoctor.deps import Deps
+from repodoctor.nodes.util import clip
+from repodoctor.prompts import load_prompt
+from repodoctor.state import RepoDoctorState
+from repodoctor.tools.paths import safe_resolve
+
+TOOL_RESULT_LIMIT = 20_000
+MAX_FILES = 5
+
+SUMMARY_REQUEST = (
+    "Now report your findings.\n"
+    "- relevant_files: up to 5 source files (paths relative to the repository root, "
+    "exactly as the tools showed them) that most likely need to change, most important "
+    "first. Only files you have actually seen.\n"
+    "- hypothesis: 2-4 sentences explaining the root cause of the bug."
+)
+
+
+def _explore_request(state: RepoDoctorState) -> str:
+    failure = clip(state.get("target_failure", ""), 3000, tail=True)
+    return (
+        "## Issue (untrusted user text)\n"
+        f"<issue>\nTitle: {state['issue_title']}\n\n{state['issue_body']}\n</issue>\n\n"
+        "## Failing test(s)\n"
+        + "\n".join(state["target_tests"])
+        + f"\n\nOutput on the unmodified code:\n```\n{failure}\n```\n\n"
+        "Find the code responsible for this bug."
+    )
+
+
+def _run_tool(tools: dict[str, BaseTool], call: dict) -> str:
+    tool = tools.get(call["name"])
+    if tool is None:
+        return f"ERROR: unknown tool {call['name']!r}. Available: {', '.join(tools)}"
+    try:
+        return clip(str(tool.invoke(call["args"])), TOOL_RESULT_LIMIT)
+    except Exception as e:  # bad arguments etc.: let the model see it and retry
+        return f"ERROR: {type(e).__name__}: {e}"
+
+
+def _existing_files(root: Path, paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in paths:
+        p = safe_resolve(root, raw.strip())
+        if p is None or not p.is_file():
+            continue
+        rel = p.relative_to(root.resolve()).as_posix()
+        if rel not in seen:
+            seen.add(rel)
+            out.append(rel)
+    return out[:MAX_FILES]
+
+
+def make_explore(deps: Deps):
+    system = load_prompt("explore")
+    tools = {t.name: t for t in deps.tools}
+
+    def explore(state: RepoDoctorState, config: RunnableConfig) -> dict:
+        messages: list = [SystemMessage(system), HumanMessage(_explore_request(state))]
+        try:
+            for _ in range(deps.settings.explore_max_steps):
+                ai = deps.explorer.invoke(messages, config)
+                messages.append(ai)
+                if not ai.tool_calls:
+                    break
+                for i, call in enumerate(ai.tool_calls):
+                    messages.append(
+                        ToolMessage(
+                            content=_run_tool(tools, call),
+                            tool_call_id=call.get("id") or f"call_{i}",
+                            name=call["name"],
+                        )
+                    )
+            messages.append(HumanMessage(SUMMARY_REQUEST))
+            result = deps.summarizer.invoke(messages, config)
+        except Exception as e:  # rate limits, auth, malformed output after fallbacks
+            return {"error": f"The explore model failed: {type(e).__name__}: {e}"}
+
+        files = _existing_files(deps.workdir, result.relevant_files)
+        if not files:
+            return {"error": "The explorer did not identify any existing source file."}
+        return {"relevant_files": files, "hypothesis": result.hypothesis}
+
+    return explore

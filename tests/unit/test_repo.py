@@ -8,9 +8,11 @@ from repodoctor.tools.repo import (
     clone_repo,
     detect_project,
     get_diff,
-    reset_changes,
+    # reset_changes,
     run_git,
     remove_dir,
+    reset_to_clean,
+    list_untracked,
 )
 
 
@@ -67,15 +69,32 @@ def test_diff_ignores_cache_files(cloned):
     assert "__pycache__" not in diff and ".pytest_cache" not in diff
 
 
-def test_reset_restores_clean_state(cloned):
-    write(cloned, "app.py", "x = 99\n")
-    write(cloned, "extra.py", "q = 1\n")
-    get_diff(cloned)  # stages changes, like the real flow
-    reset_changes(cloned)
-    assert (cloned / "app.py").read_text() == "x = 1\n"
-    assert not (cloned / "extra.py").exists()
-    assert get_diff(cloned) == ""
+# def test_reset_restores_clean_state(cloned):
+#     write(cloned, "app.py", "x = 99\n")
+#     write(cloned, "extra.py", "q = 1\n")
+#     get_diff(cloned)  # stages changes, like the real flow
+#     reset_changes(cloned)
+#     assert (cloned / "app.py").read_text() == "x = 1\n"
+#     assert not (cloned / "extra.py").exists()
+#     assert get_diff(cloned) == ""
 
+def test_diff_can_be_limited_to_paths(cloned):
+    write(cloned, "app.py", "x = 2\n")
+    write(cloned, "generated.txt", "junk\n")
+    diff = get_diff(cloned, ["app.py"])
+    assert "app.py" in diff and "generated.txt" not in diff
+
+
+def test_reset_to_clean_removes_only_new_files(cloned):
+    write(cloned, "build_artifact.txt", "keep me\n")
+    keep = list_untracked(cloned)
+    write(cloned, "app.py", "x = 99\n")
+    write(cloned, "created_by_agent.py", "q = 1\n")
+    get_diff(cloned, ["app.py", "created_by_agent.py"])
+    reset_to_clean(cloned, keep)
+    assert (cloned / "app.py").read_text() == "x = 1\n"
+    assert not (cloned / "created_by_agent.py").exists()
+    assert (cloned / "build_artifact.txt").exists()
 
 def test_detect_pyproject_with_pytest_extras_and_groups(tmp_path):
     write(

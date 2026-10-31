@@ -52,3 +52,6 @@ markers = [
     "slow: slow end-to-end tests (run manually)",
     "docker: needs a running Docker daemon (builds the sandbox image on first run)",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"src/repodoctor/cli.py" = ["B008"]

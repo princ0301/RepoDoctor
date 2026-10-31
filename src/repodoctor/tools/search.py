@@ -197,3 +197,20 @@ def list_dir(root: Path, path: str = ".", *, max_entries: int = 200) -> str:
     if len(names) > max_entries:
         out += f"\n[... {len(names) - max_entries} more entries not shown ...]"
     return out
+
+def read_raw(root: Path, path: str, *, max_chars: int = 200_000) -> str:
+    """Whole file as plain text (LF-normalized, no line numbers), for building prompts."""
+    root = root.resolve()
+    p = _resolve(root, path)
+    if not p.is_file():
+        raise SearchError(f"file not found: {path}")
+    size = p.stat().st_size
+    if size > MAX_FILE_BYTES:
+        raise SearchError(f"{path}: file too large ({size} bytes)")
+    data = p.read_bytes()
+    if b"\x00" in data[:8192]:
+        raise SearchError(f"{path}: binary file")
+    text = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    if len(text) > max_chars:
+        return text[:max_chars] + "\n[... file truncated ...]"
+    return text
