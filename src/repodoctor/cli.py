@@ -16,17 +16,21 @@ def hello(name: str = "world") -> None:
 
 @app.command()
 def doctor() -> None:
+    """Check that your environment is ready."""
     for tool in ("uv", "git", "rg", "docker"):
-        typer.echo(f"{'OK' if shutil.which(tool) else 'MISSING'} {tool}")
+        typer.echo(f"{'OK     ' if shutil.which(tool) else 'MISSING'} {tool}")
 
     s = get_settings()
-    for label, value in {
+    required = {
         "GOOGLE_API_KEY": s.google_api_key,
         "OPENROUTER_API_KEY": s.openrouter_api_key,
         "GITHUB_TOKEN": s.github_token,
-        "GITHUB_TEST_REPO": s.github_test_repo,
-    }.items():
-        typer.echo(f"{'OK' if value else 'MISSING'} {label}")
+        "GITHUB_USERNAME": s.github_username,
+        "ALLOWED_REPOS": s.allowed_repos,
+    }
+    for label, value in required.items():
+        typer.echo(f"{'OK     ' if value else 'MISSING'} {label}")
 
-if __name__ == "__main__":
-    app()
+    typer.echo(f"INFO    DRY_RUN={s.dry_run}")
+    if not s.dry_run:
+        typer.echo("WARN    DRY_RUN is off: the agent can push branches and open PRs")
