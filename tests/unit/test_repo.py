@@ -1,5 +1,6 @@
 from pathlib import Path
-
+import os
+import stat
 import pytest
 
 from repodoctor.tools.repo import (
@@ -9,6 +10,7 @@ from repodoctor.tools.repo import (
     get_diff,
     reset_changes,
     run_git,
+    remove_dir,
 )
 
 
@@ -111,3 +113,16 @@ def test_detect_unsupported_without_pytest(tmp_path):
     write(tmp_path, "pyproject.toml", '[project]\nname = "p"\n')
     info = detect_project(tmp_path)
     assert not info.supported and "pytest" in info.reason
+
+def test_remove_dir_missing_path_is_noop(tmp_path):
+    remove_dir(tmp_path / "does-not-exist")  # must not raise
+
+
+def test_remove_dir_deletes_readonly_files(tmp_path):
+    d = tmp_path / "d"
+    d.mkdir()
+    f = d / "x.txt"
+    f.write_text("x")
+    os.chmod(f, stat.S_IREAD)
+    remove_dir(d)
+    assert not d.exists()

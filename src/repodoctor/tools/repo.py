@@ -44,11 +44,14 @@ def run_git(*args: str, cwd: Path | None = None, timeout: int = 120) -> str:
     return p.stdout
 
 def _on_rm_error(func, path, _exc) -> None:
-    os.chmod(path, stat.S_IWRITE)
-    func(path)
+    try:
+        os.chmod(path, stat.S_IWRITE)  # git marks object files read-only on Windows
+        func(path)
+    except FileNotFoundError:
+        pass  # already gone, nothing to do
 
 def remove_dir(path: Path) -> None:
-    if not path.exists:
+    if not path.exists():
         return
     if sys.version_info >= (3, 12):
         shutil.rmtree(path, onexc=_on_rm_error)
