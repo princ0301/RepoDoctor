@@ -1,30 +1,41 @@
 import shutil
+
 import typer
 from dotenv import load_dotenv
 
 from repodoctor.config import get_settings
 from repodoctor.graph import build_hello_graph
-from repodoctor.tools.issue_ref import InvalidIssueUrl, RepoNotAllowed, check_allowed, parse_issue_url
+from repodoctor.tools.issue_ref import (
+    InvalidIssueUrl,
+    IssueRef,
+    RepoNotAllowed,
+    check_allowed,
+    parse_issue_url,
+)
+from repodoctor.tools.repo import GitError, clone_issue_repo, detect_project, remove_dir
 
+# Loads .env into os.environ so LangSmith picks up LANGSMITH_* variables
 load_dotenv()
 
 app = typer.Typer(no_args_is_help=True, help="RepoDoctor: autonomous issue fixer")
 
-@app.command()
-def hello(name: str = "world") -> None:
-    result = build_hello_graph().invoke({"name": name}, config={"run_name": "hello"})
-    typer.echo(result["greeting"])
 
-@app.command("check-issue")
-def check_issue(url: str) -> None:
-    """Validate an issue URL against the allowlist."""
+def _resolve_issue(url: str) -> IssueRef:
     try:
         ref = parse_issue_url(url)
         check_allowed(ref, get_settings().allowed_repo_list)
     except (InvalidIssueUrl, RepoNotAllowed) as e:
         typer.echo(f"ERROR   {e}")
-        raise typer.Exit(1)
-    typer.echo(f"OK      {ref.full_name} #{ref.number}")
+        raise typer.Exit(1) from e
+    return ref
+
+
+@app.command()
+def hello(name: str = "world") -> None:
+    """Run the placeholder graph (check that it shows up in LangSmith)."""
+    result = build_hello_graph().invoke({"name": name}, config={"run_name": "hello"})
+    typer.echo(result["greeting"])
+
 
 @app.command()
 def doctor() -> None:
@@ -46,3 +57,41 @@ def doctor() -> None:
     typer.echo(f"INFO    DRY_RUN={s.dry_run}")
     if not s.dry_run:
         typer.echo("WARN    DRY_RUN is off: the agent can push branches and open PRs")
+
+
+@app.command("check-issue")
+def check_issue(url: str) -> None:
+    """Validate an issue URL against the allowlist."""
+    ref = _resolve_issue(url)
+    typer.echo(f"OK      {ref.full_name} #{ref.number}")
+
+
+@app.command("inspect")
+def inspect_repo(url: str) -> None:
+    """Clone the repo behind an issue and detect how to test it."""
+    ref = _resolve_issue(url)
+    dest = get_settings().work_dir.resolve() / f"{ref.owner}__{ref.repo}"
+    remove_dir(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    typer.echo(f"Cloning {ref.full_name} ...")
+    try:
+        clone_issue_repo(ref, dest)
+    except GitError as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+
+    info = detect_project(dest)
+    typer.echo(f"Cloned to      {dest}")
+    if not info.supported:
+        typer.echo(f"UNSUPPORTED    {info.reason}")
+        raise typer.Exit(2)
+    typer.echo(f"Test command   {' '.join(info.test_command)}")
+    typer.echo(f"Extras         {info.extras or '-'}")
+    typer.echo(f"Dep groups     {info.dependency_groups or '-'}")
+    typer.echo(f"Req files      {info.requirement_files or '-'}")
+    typer.echo(f"Python         {info.requires_python or 'not specified'}")
+
+
+if __name__ == "__main__":
+    app()
