@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     # --- Paths ---
     work_dir: Path = Path(".repodoctor/work")   # where repos get cloned (gitignored)
 
+    sandbox_memory: str = "2g"
+    sandbox_cpus: float = 2.0
+
     @property
     def allowed_repo_list(self) -> list[str]:
         return [r.strip() for r in self.allowed_repos.split(",") if r.strip()]

@@ -50,4 +50,5 @@ select = ["E", "F", "I", "UP", "B"]
 testpaths = ["tests"]
 markers = [
     "slow: slow end-to-end tests (run manually)",
+    "docker: needs a running Docker daemon (builds the sandbox image on first run)",
 ]

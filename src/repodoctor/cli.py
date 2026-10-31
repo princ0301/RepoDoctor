@@ -1,4 +1,5 @@
 import shutil
+from pathlib import Path
 
 import typer
 from dotenv import load_dotenv
@@ -12,7 +13,14 @@ from repodoctor.tools.issue_ref import (
     check_allowed,
     parse_issue_url,
 )
-from repodoctor.tools.repo import GitError, clone_issue_repo, detect_project, remove_dir
+from repodoctor.tools.repo import (
+    GitError,
+    ProjectInfo,
+    clone_issue_repo,
+    detect_project,
+    remove_dir,
+)
+from repodoctor.tools.sandbox import Sandbox, SandboxError, ensure_image, image_exists
 
 # Loads .env into os.environ so LangSmith picks up LANGSMITH_* variables
 load_dotenv()
@@ -28,6 +36,19 @@ def _resolve_issue(url: str) -> IssueRef:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
     return ref
+
+
+def _clone_and_detect(ref: IssueRef) -> tuple[Path, ProjectInfo]:
+    dest = get_settings().work_dir.resolve() / f"{ref.owner}__{ref.repo}"
+    remove_dir(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"Cloning {ref.full_name} ...")
+    try:
+        clone_issue_repo(ref, dest)
+    except GitError as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    return dest, detect_project(dest)
 
 
 @app.command()
@@ -70,18 +91,7 @@ def check_issue(url: str) -> None:
 def inspect_repo(url: str) -> None:
     """Clone the repo behind an issue and detect how to test it."""
     ref = _resolve_issue(url)
-    dest = get_settings().work_dir.resolve() / f"{ref.owner}__{ref.repo}"
-    remove_dir(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    typer.echo(f"Cloning {ref.full_name} ...")
-    try:
-        clone_issue_repo(ref, dest)
-    except GitError as e:
-        typer.echo(f"ERROR   {e}")
-        raise typer.Exit(1) from e
-
-    info = detect_project(dest)
+    dest, info = _clone_and_detect(ref)
     typer.echo(f"Cloned to      {dest}")
     if not info.supported:
         typer.echo(f"UNSUPPORTED    {info.reason}")
@@ -91,6 +101,41 @@ def inspect_repo(url: str) -> None:
     typer.echo(f"Dep groups     {info.dependency_groups or '-'}")
     typer.echo(f"Req files      {info.requirement_files or '-'}")
     typer.echo(f"Python         {info.requires_python or 'not specified'}")
+
+
+@app.command()
+def smoke(url: str) -> None:
+    """Run the repo's own test suite in the sandbox (baseline check)."""
+    ref = _resolve_issue(url)
+    dest, info = _clone_and_detect(ref)
+    if not info.supported:
+        typer.echo(f"UNSUPPORTED    {info.reason}")
+        raise typer.Exit(2)
+
+    s = get_settings()
+    try:
+        if not image_exists():
+            typer.echo("Building sandbox image (first run only, takes a few minutes) ...")
+            ensure_image()
+        with Sandbox(dest, memory=s.sandbox_memory, cpus=s.sandbox_cpus) as sb:
+            typer.echo("Installing dependencies (network on) ...")
+            r = sb.install(info)
+            if not r.ok:
+                typer.echo(r.output)
+                typer.echo(f"\nERROR   install failed (exit {r.exit_code}, "
+                           f"{'timeout' if r.timed_out else 'error'})")
+                raise typer.Exit(3)
+            sb.lock_network()
+            typer.echo("Running tests (network off) ...")
+            r = sb.run_tests(info, timeout=s.sandbox_timeout_s)
+    except SandboxError as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+
+    typer.echo(r.output)
+    status = "TIMEOUT" if r.timed_out else ("PASS" if r.ok else f"FAIL (exit {r.exit_code})")
+    typer.echo(f"\nResult: {status} in {r.duration_s:.0f}s")
+    raise typer.Exit(0 if r.ok else 1)
 
 
 if __name__ == "__main__":
