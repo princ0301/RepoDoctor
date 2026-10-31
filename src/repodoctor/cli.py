@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 
 from repodoctor.config import get_settings
 from repodoctor.graph import build_hello_graph
+from repodoctor.tools.issue_ref import InvalidIssueUrl, RepoNotAllowed, check_allowed, parse_issue_url
 
 load_dotenv()
 
@@ -13,6 +14,17 @@ app = typer.Typer(no_args_is_help=True, help="RepoDoctor: autonomous issue fixer
 def hello(name: str = "world") -> None:
     result = build_hello_graph().invoke({"name": name}, config={"run_name": "hello"})
     typer.echo(result["greeting"])
+
+@app.command("check-issue")
+def check_issue(url: str) -> None:
+    """Validate an issue URL against the allowlist."""
+    try:
+        ref = parse_issue_url(url)
+        check_allowed(ref, get_settings().allowed_repo_list)
+    except (InvalidIssueUrl, RepoNotAllowed) as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1)
+    typer.echo(f"OK      {ref.full_name} #{ref.number}")
 
 @app.command()
 def doctor() -> None:
