@@ -8,6 +8,7 @@ from repodoctor.tools.github import (
     find_fixing_pr,
     format_issue_body,
     github_client,
+    fetch_pr,
 )
 from repodoctor.tools.issue_ref import IssueRef
 
@@ -140,3 +141,35 @@ def test_ambiguous_prs_are_rejected():
 def test_no_merged_pr_is_an_error():
     with pytest.raises(GitHubError, match="no merged pull request"):
         find_fixing_pr(client(timeline()), REF)
+
+def test_finds_the_pr_through_the_closing_commit():
+    closing = "c" * 40
+    routes = {
+        **timeline({"event": "closed", "commit_id": closing}),
+        f"/repos/o/r/commits/{closing}/pulls": [{"number": 9}],
+        "/repos/o/r/pulls/9": pull(9),
+    }
+    assert find_fixing_pr(client(routes), REF).number == 9
+
+
+def test_closed_event_without_a_commit_is_ignored():
+    with pytest.raises(GitHubError, match="no merged pull request"):
+        find_fixing_pr(client(timeline({"event": "closed", "commit_id": None})), REF)
+
+
+def test_closing_commit_lookup_failure_is_not_fatal():
+    routes = {
+        **timeline({"event": "closed", "commit_id": "c" * 40}, xref(9)),
+        "/repos/o/r/pulls/9": pull(9),
+    }  # the commits/<sha>/pulls route is missing (404): the cross-reference still works
+    assert find_fixing_pr(client(routes), REF).number == 9
+
+
+def test_fetch_pr_returns_a_merged_pr():
+    pr = fetch_pr(client({"/repos/o/r/pulls/9": pull(9)}), REF, 9)
+    assert pr.number == 9 and pr.base_sha == SHA
+
+
+def test_fetch_pr_rejects_an_unmerged_pr():
+    with pytest.raises(GitHubError, match="not been merged"):
+        fetch_pr(client({"/repos/o/r/pulls/9": pull(9, merged=False)}), REF, 9)

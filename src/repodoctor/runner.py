@@ -12,6 +12,7 @@ from repodoctor.nodes.search_tools import make_search_tools
 from repodoctor.schemas import ExploreResult, FixProposal, ReproTest
 from repodoctor.tools.github import (
     fetch_issue,
+    fetch_pr,
     find_fixing_pr,
     format_issue_body,
     github_client,
@@ -135,6 +136,7 @@ def run_fix_issue(
     *,
     replay: bool,
     targets: list[str],
+    fix_pr: int | None = None,
     log: Callable[[str], None] = lambda _msg: None,
 ) -> tuple[dict, IntakeInfo]:
     """GitHub mode: fetch the issue, clone the repo, run the loop. Nothing is pushed."""
@@ -150,7 +152,7 @@ def run_fix_issue(
         if replay:
             if issue.state != "closed":
                 raise RunnerError("--replay needs a closed issue with a merged fix")
-            pr = find_fixing_pr(client, ref)
+            pr = fetch_pr(client, ref, fix_pr) if fix_pr else find_fixing_pr(client, ref)
         elif issue.state == "closed":
             raise RunnerError(
                 "this issue is closed, so the fix is probably already in the default branch. "

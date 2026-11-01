@@ -75,6 +75,9 @@ def _print_result(final: dict, settings: Settings) -> None:
             f"(accepted on attempt {final.get('repro_attempts', 1)})"
         )
     typer.echo(f"Fix attempts:   {final.get('attempts', 0)}/{settings.max_attempts}")
+    for h in final.get("history", []):
+        first = (h.get("feedback") or "-").splitlines()[0]
+        typer.echo(f"  attempt {h['attempt']}: {first}")
 
     if final.get("error"):
         typer.echo(f"\nERROR   {final['error']}")
@@ -318,6 +321,12 @@ def fix_issue(
     test: list[str] | None = typer.Option(
         None, "--test", help="Your own failing test id (default: the agent writes one)"
     ),
+    fix_pr: int | None = typer.Option(
+        None,
+        "--fix-pr",
+        help="With --replay: number of the merged PR that fixed the issue "
+        "(use it if it is not detected automatically)",
+    ),
 ) -> None:
     """Run the fix loop on a real GitHub issue (repo must be in ALLOWED_REPOS)."""
     ref = _resolve_issue(url)
@@ -326,7 +335,8 @@ def fix_issue(
         typer.echo("WARN    GITHUB_TOKEN not set: GitHub allows only 60 API requests/hour")
     try:
         final, intake = run_fix_issue(
-            ref, settings, replay=replay, targets=list(test or []), log=typer.echo
+            ref, settings, replay=replay, targets=list(test or []), fix_pr=fix_pr,
+            log=typer.echo,
         )
     except RUN_ERRORS as e:
         typer.echo(f"ERROR   {e}")

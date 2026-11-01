@@ -11,6 +11,8 @@ API = "https://api.github.com"
 MAX_BODY_CHARS = 8_000
 MAX_COMMENTS = 5
 MAX_COMMENT_CHARS = 1_500
+TIMELINE_PAGE_SIZE = 100
+TIMELINE_MAX_PAGES = 3
 
 _CLOSING = re.compile(
     r"\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\b[:\s]+(?:[\w.-]+/[\w.-]+)?#(\d+)", re.I
@@ -109,39 +111,7 @@ def _closed_numbers(pr_body: str) -> set[int]:
     return {int(n) for n in _CLOSING.findall(pr_body)}
 
 
-def find_fixing_pr(client: httpx.Client, ref: IssueRef) -> FixingPR:
-    """The merged PR in the same repo that fixed this issue (via the issue timeline)."""
-    events = _get(
-        client, f"/repos/{ref.full_name}/issues/{ref.number}/timeline", per_page=100
-    )
-    suffix = f"/repos/{ref.full_name}".lower()
-    numbers: list[int] = []
-    for ev in events:
-        if ev.get("event") != "cross-referenced":
-            continue
-        src = (ev.get("source") or {}).get("issue") or {}
-        if "pull_request" not in src:
-            continue
-        if not str(src.get("repository_url", "")).lower().endswith(suffix):
-            continue
-        n = src.get("number")
-        if isinstance(n, int) and n not in numbers:
-            numbers.append(n)
-
-    merged = []
-    for n in numbers:
-        pr = _get(client, f"/repos/{ref.full_name}/pulls/{n}")
-        if pr.get("merged"):
-            merged.append(pr)
-    if not merged:
-        raise GitHubError("no merged pull request is linked to this issue")
-
-    closers = [p for p in merged if ref.number in _closed_numbers(p.get("body") or "")]
-    chosen = closers or merged
-    if len(chosen) > 1:
-        nums = ", ".join(f"#{p['number']}" for p in chosen)
-        raise GitHubError(f"several merged PRs reference this issue ({nums}); pick another issue")
-    pr = chosen[0]
+def _to_fixing_pr(pr: dict) -> FixingPR:
     return FixingPR(
         number=pr["number"],
         url=pr.get("html_url", ""),
@@ -149,3 +119,80 @@ def find_fixing_pr(client: httpx.Client, ref: IssueRef) -> FixingPR:
         base_sha=pr["base"]["sha"],
         merge_sha=pr.get("merge_commit_sha"),
     )
+
+
+def _timeline(client: httpx.Client, ref: IssueRef) -> list[dict]:
+    events: list[dict] = []
+    for page in range(1, TIMELINE_MAX_PAGES + 1):
+        batch = _get(
+            client,
+            f"/repos/{ref.full_name}/issues/{ref.number}/timeline",
+            per_page=TIMELINE_PAGE_SIZE,
+            page=page,
+        )
+        events += batch
+        if len(batch) < TIMELINE_PAGE_SIZE:
+            break
+    return events
+
+
+def _candidate_numbers(client: httpx.Client, ref: IssueRef, events: list[dict]) -> list[int]:
+    """PR numbers that might have fixed the issue, from two kinds of timeline evidence:
+    pull requests that mention it, and the pull request(s) behind the closing commit."""
+    repo_suffix = f"/repos/{ref.full_name}".lower()
+    numbers: list[int] = []
+
+    def add(n) -> None:
+        if isinstance(n, int) and n not in numbers:
+            numbers.append(n)
+
+    for ev in events:
+        kind = ev.get("event")
+        if kind == "cross-referenced":
+            src = (ev.get("source") or {}).get("issue") or {}
+            if "pull_request" in src and str(src.get("repository_url", "")).lower().endswith(
+                repo_suffix
+            ):
+                add(src.get("number"))
+        elif kind == "closed" and ev.get("commit_id"):
+            try:
+                prs = _get(client, f"/repos/{ref.full_name}/commits/{ev['commit_id']}/pulls")
+            except GitHubError:
+                continue
+            for pr in prs:
+                add(pr.get("number"))
+    return numbers
+
+
+def find_fixing_pr(client: httpx.Client, ref: IssueRef) -> FixingPR:
+    """The merged PR in the same repo that fixed this issue."""
+    numbers = _candidate_numbers(client, ref, _timeline(client, ref))
+
+    merged = []
+    for n in numbers:
+        pr = _get(client, f"/repos/{ref.full_name}/pulls/{n}")
+        if pr.get("merged"):
+            merged.append(pr)
+    if not merged:
+        raise GitHubError(
+            "no merged pull request found for this issue (checked references and the "
+            "closing commit). Pass --fix-pr NUMBER to choose the pull request yourself."
+        )
+
+    closers = [p for p in merged if ref.number in _closed_numbers(p.get("body") or "")]
+    chosen = closers or merged
+    if len(chosen) > 1:
+        nums = ", ".join(f"#{p['number']}" for p in chosen)
+        raise GitHubError(
+            f"several merged PRs reference this issue ({nums}). "
+            "Pass --fix-pr NUMBER to choose one."
+        )
+    return _to_fixing_pr(chosen[0])
+
+
+def fetch_pr(client: httpx.Client, ref: IssueRef, number: int) -> FixingPR:
+    """A specific merged PR of the same repo (manual override for find_fixing_pr)."""
+    pr = _get(client, f"/repos/{ref.full_name}/pulls/{number}")
+    if not pr.get("merged"):
+        raise GitHubError(f"PR #{number} has not been merged")
+    return _to_fixing_pr(pr)
