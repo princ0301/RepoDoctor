@@ -1,0 +1,42 @@
+[
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 154,
+    "fix_pr": 169
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 122,
+    "fix_pr": 123
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 205,
+    "fix_pr": 329
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 333,
+    "fix_pr": 334
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 152,
+    "fix_pr": 297
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 51,
+    "fix_pr": 294
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 62,
+    "fix_pr": 63
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 24,
+    "fix_pr": 26
+  }
+]

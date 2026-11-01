@@ -1,4 +1,6 @@
+import json
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -7,6 +9,17 @@ from dotenv import load_dotenv
 
 from repodoctor.config import Settings, get_settings
 from repodoctor.demo import make_demo
+from repodoctor.evals.build import CaseRejected, build_case
+from repodoctor.evals.cases import (
+    CaseSpec,
+    case_id,
+    load_cases,
+    load_specs,
+    save_cases,
+    save_specs,
+)
+from repodoctor.evals.discover import discover
+from repodoctor.evals.run import load_results, run_eval, summarize
 from repodoctor.graph import build_hello_graph
 from repodoctor.models import ENDPOINTS, ModelConfigError, make_chat_model, probe, role_specs
 from repodoctor.runner import (
@@ -16,7 +29,7 @@ from repodoctor.runner import (
     run_fix,
     run_fix_issue,
 )
-from repodoctor.tools.github import GitHubError
+from repodoctor.tools.github import GitHubError, github_client
 from repodoctor.tools.issue_ref import (
     InvalidIssueUrl,
     IssueRef,
@@ -348,6 +361,117 @@ def fix_issue(
         if intake.fixing_pr_url:
             typer.echo(f"\nCompare with the real fix: {intake.fixing_pr_url}")
 
+@app.command("eval-discover")
+def eval_discover(
+    repo: str,
+    limit: int = typer.Option(8, help="Stop after this many candidates"),
+    max_prs: int = typer.Option(200, help="How many recent merged PRs to scan"),
+    out: Path = typer.Option(Path("evals/specs.json"), "--out"),
+) -> None:
+    """Find (issue, fixing PR) candidates in a repo and add them to the specs file."""
+    settings = get_settings()
+    owner, _, name = repo.partition("/")
+    try:
+        check_allowed(IssueRef(owner, name, 0), settings.allowed_repo_list)
+        with github_client(settings.github_token) as client:
+            found = discover(client, repo, limit=limit, max_prs=max_prs)
+    except (RepoNotAllowed, GitHubError) as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    specs = load_specs(out) if out.exists() else []
+    known = {(s.repo, s.issue) for s in specs}
+    added = [s for s in found if (s.repo, s.issue) not in known]
+    save_specs(out, specs + added)
+    for s in added:
+        typer.echo(f"  + {s.repo}#{s.issue}  (fixed by PR #{s.fix_pr})")
+    typer.echo(f"{len(added)} new candidate(s); {len(specs) + len(added)} in {out}")
+
+
+@app.command("eval-build")
+def eval_build(
+    specs_file: Path = typer.Option(Path("evals/specs.json"), "--specs"),
+    out: Path = typer.Option(Path("evals/cases.json"), "--out"),
+) -> None:
+    """Validate specs and compute ground truth (which tests the fix must turn green)."""
+    if not specs_file.exists():
+        typer.echo(f"ERROR   {specs_file} does not exist")
+        raise typer.Exit(1)
+    settings = get_settings()
+    cases = load_cases(out) if out.exists() else []
+    done = {c.id for c in cases}
+    with github_client(settings.github_token) as client:
+        for spec in load_specs(specs_file):
+            if case_id(spec.repo, spec.issue) in done:
+                typer.echo(f"Skipping {spec.repo}#{spec.issue} (already built)")
+                continue
+            typer.echo(f"Building {spec.repo}#{spec.issue} (PR #{spec.fix_pr}) ...")
+            try:
+                case = build_case(spec, settings, client, typer.echo)
+            except (CaseRejected, GitHubError, GitError, SandboxError, RepoNotAllowed) as e:
+                typer.echo(f"  REJECTED  {e}")
+                continue
+            cases.append(case)
+            save_cases(out, cases)
+            typer.echo(
+                f"  OK        {len(case.fail_to_pass)} fail-to-pass, "
+                f"{len(case.pass_to_pass)} pass-to-pass tests"
+            )
+    typer.echo(f"{len(cases)} case(s) in {out}")
+
+
+@app.command("eval-run")
+def eval_run(
+    cases_file: Path = typer.Option(Path("evals/cases.json"), "--cases"),
+    trials: int = typer.Option(1, help="Runs per case (use 3+ for stable numbers)"),
+    limit: int = typer.Option(0, help="Only the first N cases (0 = all)"),
+    only: list[str] | None = typer.Option(None, "--only", help="Case id(s) to run"),
+    label: str = typer.Option("run", help="Names this run in results and LangSmith"),
+) -> None:
+    """Run the agent on every case and grade it with the maintainers' tests."""
+    if not cases_file.exists():
+        typer.echo(f"ERROR   {cases_file} does not exist (run eval-build first)")
+        raise typer.Exit(1)
+    settings = get_settings()
+    cases = load_cases(cases_file)
+    if only:
+        cases = [c for c in cases if c.id in only]
+    if limit:
+        cases = cases[:limit]
+    try:
+        for c in cases:
+            check_allowed(c.ref, settings.allowed_repo_list)
+    except RepoNotAllowed as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    if not cases:
+        typer.echo("ERROR   no cases selected")
+        raise typer.Exit(1)
+
+    out_dir = Path(".repodoctor/evals") / f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{label}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "meta.json").write_text(
+        json.dumps({
+            "label": label, "trials": trials, "cases": [c.id for c in cases],
+            "llm_explore": settings.llm_explore, "llm_fix": settings.llm_fix,
+            "llm_fallbacks": settings.fallback_specs,
+            "max_attempts": settings.max_attempts,
+            "repro_max_attempts": settings.repro_max_attempts,
+        }, indent=2),
+        encoding="utf-8",
+    )
+    typer.echo(f"Results: {out_dir / 'results.jsonl'}\n")
+    results = run_eval(
+        cases, settings, trials=trials, label=label,
+        results_file=out_dir / "results.jsonl", log=typer.echo,
+    )
+    typer.echo("\n" + summarize(results))
+
+
+@app.command("eval-report")
+def eval_report(results_file: Path) -> None:
+    """Print the summary of a finished (or interrupted) eval run."""
+    typer.echo(summarize(load_results(results_file)))
+    
 
 if __name__ == "__main__":
     app()

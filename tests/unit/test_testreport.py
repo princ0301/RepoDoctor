@@ -1,6 +1,6 @@
 import pytest
 
-from repodoctor.tools.testreport import fixed_tests, new_failures, parse_junit
+from repodoctor.tools.testreport import fixed_tests, new_failures, parse_junit, parse_outcomes
 
 SAMPLE = """<?xml version="1.0" encoding="utf-8"?>
 <testsuites><testsuite name="pytest" errors="1" failures="1" skipped="1" tests="4">
@@ -54,3 +54,19 @@ def test_fixed_tests():
     base = parse_junit(SAMPLE)
     after = parse_junit(SAMPLE.replace('<failure message="assert 1 == 2">long traceback here</failure>', ""))
     assert fixed_tests(base, after) == ["tests.test_a::test_bad"]
+
+def test_parse_outcomes_per_test():
+    assert parse_outcomes(SAMPLE) == {
+        "tests.test_a::test_ok": "passed",
+        "tests.test_a::test_bad": "failed",
+        "tests.test_b::test_setup": "error",
+        "tests.test_b::test_skip": "skipped",
+    }
+
+
+def test_parse_outcomes_worst_result_wins():
+    xml = (
+        '<testsuite><testcase classname="t" name="a"><failure message="x"/></testcase>'
+        '<testcase classname="t" name="a"><error message="teardown"/></testcase></testsuite>'
+    )
+    assert parse_outcomes(xml) == {"t::a": "error"}

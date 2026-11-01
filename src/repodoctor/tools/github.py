@@ -42,6 +42,7 @@ class FixingPR:
     title: str
     base_sha: str              # the commit the PR was opened against
     merge_sha: str | None
+    head_sha: str = ""
 
 
 def github_client(
@@ -118,6 +119,7 @@ def _to_fixing_pr(pr: dict) -> FixingPR:
         title=pr.get("title", ""),
         base_sha=pr["base"]["sha"],
         merge_sha=pr.get("merge_commit_sha"),
+        head_sha=(pr.get("head") or {}).get("sha", ""),
     )
 
 
@@ -196,3 +198,40 @@ def fetch_pr(client: httpx.Client, ref: IssueRef, number: int) -> FixingPR:
     if not pr.get("merged"):
         raise GitHubError(f"PR #{number} has not been merged")
     return _to_fixing_pr(pr)
+
+
+@dataclass
+class PRFile:
+    path: str
+    status: str   # added | modified | removed | renamed | ...
+
+
+def list_pr_files(client: httpx.Client, ref: IssueRef, number: int) -> list[PRFile]:
+    files: list[PRFile] = []
+    for page in range(1, 4):
+        batch = _get(
+            client, f"/repos/{ref.full_name}/pulls/{number}/files", per_page=100, page=page
+        )
+        files += [PRFile(f["filename"], f.get("status", "")) for f in batch]
+        if len(batch) < 100:
+            break
+    return files
+
+
+def list_merged_prs(client: httpx.Client, full_name: str, max_prs: int = 200) -> list[dict]:
+    """Recently updated merged PRs of a repo (newest first)."""
+    merged: list[dict] = []
+    for page in range(1, 11):
+        batch = _get(
+            client, f"/repos/{full_name}/pulls",
+            state="closed", sort="updated", direction="desc", per_page=100, page=page,
+        )
+        merged += [p for p in batch if p.get("merged_at")]
+        if len(batch) < 100 or len(merged) >= max_prs:
+            break
+    return merged[:max_prs]
+
+
+def closed_issue_numbers(text: str) -> list[int]:
+    """Issue numbers a PR description closes ('Fixes #12', 'Closes #3')."""
+    return sorted(_closed_numbers(text))

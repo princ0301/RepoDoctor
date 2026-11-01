@@ -9,6 +9,9 @@ from repodoctor.tools.github import (
     format_issue_body,
     github_client,
     fetch_pr,
+    list_pr_files,
+    list_merged_prs,
+    closed_issue_numbers,
 )
 from repodoctor.tools.issue_ref import IssueRef
 
@@ -173,3 +176,26 @@ def test_fetch_pr_returns_a_merged_pr():
 def test_fetch_pr_rejects_an_unmerged_pr():
     with pytest.raises(GitHubError, match="not been merged"):
         fetch_pr(client({"/repos/o/r/pulls/9": pull(9, merged=False)}), REF, 9)
+
+def test_list_pr_files():
+    routes = {"/repos/o/r/pulls/9/files": [
+        {"filename": "src/a.py", "status": "modified"},
+        {"filename": "tests/test_a.py", "status": "added"},
+    ]}
+    files = list_pr_files(client(routes), REF, 9)
+    assert [(f.path, f.status) for f in files] == [
+        ("src/a.py", "modified"), ("tests/test_a.py", "added"),
+    ]
+
+
+def test_list_merged_prs_skips_unmerged():
+    routes = {"/repos/o/r/pulls": [
+        {"number": 1, "merged_at": "2026-01-01T00:00:00Z"},
+        {"number": 2, "merged_at": None},
+    ]}
+    assert [p["number"] for p in list_merged_prs(client(routes), "o/r")] == [1]
+
+
+def test_closed_issue_numbers():
+    assert closed_issue_numbers("Fixes #5 and closes #7. See #9.") == [5, 7]
+    assert closed_issue_numbers("nothing here") == []

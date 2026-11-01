@@ -53,3 +53,31 @@ def new_failures(baseline: SuiteReport, after: SuiteReport) -> dict[str, str]:
 def fixed_tests(baseline: SuiteReport, after: SuiteReport) -> list[str]:
     """Tests that failed in the baseline and pass now."""
     return sorted(set(baseline.failing) - set(after.failing))
+
+def parse_outcomes(xml_text: str) -> dict[str, str]:
+    """Test id -> 'passed' | 'failed' | 'error' | 'skipped'.
+
+    The worst outcome wins when pytest reports one test several times
+    (for example a failure in the call plus an error in teardown)."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as e:
+        raise ValueError(f"invalid JUnit XML: {e}") from e
+
+    rank = {"passed": 0, "skipped": 1, "failed": 2, "error": 3}
+    out: dict[str, str] = {}
+    for case in root.iter("testcase"):
+        cls, name = case.get("classname"), case.get("name", "")
+        test_id = f"{cls}::{name}" if cls else name
+        if case.find("error") is not None:
+            status = "error"
+        elif case.find("failure") is not None:
+            status = "failed"
+        elif case.find("skipped") is not None:
+            status = "skipped"
+        else:
+            status = "passed"
+        prev = out.get(test_id)
+        if prev is None or rank[status] > rank[prev]:
+            out[test_id] = status
+    return out

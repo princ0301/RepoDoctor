@@ -174,12 +174,23 @@ def get_diff_since(root: Path, base: str) -> str:
     """Everything that differs from `base`: committed test + staged fix."""
     return run_git("diff", "--no-color", base, cwd=root)
 
-def checkout_commit(root: Path, sha: str) -> None:
-    """Detach HEAD at `sha`, fetching it (shallow) if the clone does not have it."""
+def ensure_commit(root: Path, sha: str) -> None:
+    """Make sure the commit object exists locally (shallow-fetching it if needed)."""
     if not _SHA.fullmatch(sha):
         raise GitError(f"not a full commit sha: {sha!r}")
     try:
         run_git("cat-file", "-e", f"{sha}^{{commit}}", cwd=root)
     except GitError:
         run_git("fetch", "--depth", "1", "origin", sha, cwd=root, timeout=300)
+
+
+def checkout_commit(root: Path, sha: str) -> None:
+    """Detach HEAD at `sha`, fetching it (shallow) if the clone does not have it."""
+    ensure_commit(root, sha)
     run_git("checkout", "--detach", "-q", sha, cwd=root)
+
+
+def fetch_pull_head(root: Path, number: int) -> str:
+    """Fetch refs/pull/N/head (also works for PRs from forks); returns its commit sha."""
+    run_git("fetch", "--depth", "1", "origin", f"pull/{number}/head", cwd=root, timeout=300)
+    return run_git("rev-parse", "FETCH_HEAD", cwd=root).strip()

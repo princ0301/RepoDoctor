@@ -17,6 +17,8 @@ from repodoctor.tools.repo import (
     commit_files,
     get_diff_since,
     checkout_commit,
+    ensure_commit,
+    fetch_pull_head,
 )
 
 
@@ -184,3 +186,20 @@ def test_checkout_commit_detaches_at_an_existing_commit(tmp_path):
 def test_checkout_commit_rejects_anything_but_a_full_sha(cloned):
     with pytest.raises(GitError):
         checkout_commit(cloned, "--upload-pack=evil")
+
+def test_fetch_pull_head_returns_the_pr_commit(tmp_path):
+    src = make_repo(tmp_path / "src", {"app.py": "v1\n"})
+    write(src, "app.py", "v2\n")
+    run_git("add", "-A", cwd=src)
+    run_git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "pr", cwd=src)
+    pr_sha = head_sha(src)
+    run_git("update-ref", "refs/pull/7/head", pr_sha, cwd=src)
+    run_git("reset", "--hard", "-q", "HEAD~1", cwd=src)
+    clone = clone_repo(src.as_uri(), tmp_path / "clone")
+    assert fetch_pull_head(clone, 7) == pr_sha
+    ensure_commit(clone, pr_sha)   # present now: must not raise
+
+
+def test_ensure_commit_rejects_non_sha(cloned):
+    with pytest.raises(GitError):
+        ensure_commit(cloned, "main")

@@ -25,10 +25,14 @@ from repodoctor.tools.repo import (
     clone_repo,
     detect_project,
     get_diff_since,
+    ProjectInfo,
     remove_dir,
 )
 from repodoctor.tools.sandbox import Sandbox, ensure_image
 from repodoctor.tracing import run_config
+
+
+PostHook = Callable[[Sandbox, ProjectInfo, Path, dict], dict | None]
 
 
 class RunnerError(RuntimeError):
@@ -81,6 +85,7 @@ def execute(
     run_name: str,
     tags: list[str],
     metadata: dict,
+    post: PostHook | None = None,
 ) -> dict:
     info = detect_project(workdir)
     if not info.supported:
@@ -116,6 +121,8 @@ def execute(
         final = build_graph(deps).invoke(initial, config=config)
         if final.get("success") and final.get("base_sha"):
             final["full_diff"] = get_diff_since(workdir, final["base_sha"])
+        if post is not None:  # runs while the sandbox is still up (used by the evals)
+            final["post"] = post(sb, info, workdir, final)
         return final
 
 
@@ -137,6 +144,8 @@ def run_fix_issue(
     replay: bool,
     targets: list[str],
     fix_pr: int | None = None,
+    post: PostHook | None = None,
+    extra_tags: list[str] | None = None,
     log: Callable[[str], None] = lambda _msg: None,
 ) -> tuple[dict, IntakeInfo]:
     """GitHub mode: fetch the issue, clone the repo, run the loop. Nothing is pushed."""
@@ -177,7 +186,8 @@ def run_fix_issue(
     final = execute(
         dest, issue.title, format_issue_body(issue), targets, settings,
         run_name=f"fix:{ref.full_name}#{ref.number}",
-        tags=["github-replay" if pr else "github"],
+        tags=["github-replay" if pr else "github", *(extra_tags or [])],
         metadata={"repo": ref.full_name, "issue": ref.number, "replay": replay},
+        post=post,
     )
     return final, IntakeInfo(issue.state, pr.url if pr else None, hits)

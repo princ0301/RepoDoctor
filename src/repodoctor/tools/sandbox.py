@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from repodoctor.tools.repo import ProjectInfo
-from repodoctor.tools.testreport import SuiteReport, parse_junit
+from repodoctor.tools.testreport import SuiteReport, parse_junit, parse_outcomes
 
 IMAGE = "repodoctor-sandbox:latest"
 INSTALL_TIMEOUT_S = 900
@@ -215,20 +215,33 @@ class Sandbox:
         cmd = " ".join(shlex.quote(a) for a in [*info.test_command, *(args or [])])
         return self.run(cmd, timeout)
 
-    def run_suite(
-        self, info: ProjectInfo, args: list[str] | None = None, timeout: int = 300
-    ) -> tuple[ExecResult, SuiteReport | None]:
-        """Run tests and return a structured report (None if pytest produced none,
-        e.g. it crashed during collection or timed out)."""
+    def _run_junit(
+        self, info: ProjectInfo, args: list[str] | None, timeout: int
+    ) -> tuple[ExecResult, str | None]:
         argv = [*info.test_command, f"--junitxml={JUNIT_PATH}", *(args or [])]
         cmd = f"rm -f {JUNIT_PATH}; " + " ".join(shlex.quote(a) for a in argv)
         result = self.run(cmd, timeout)
-        xml = self.read_text(JUNIT_PATH)
+        return result, self.read_text(JUNIT_PATH)
+
+    def run_suite(
+        self, info: ProjectInfo, args: list[str] | None = None, timeout: int = 300
+    ) -> tuple[ExecResult, SuiteReport | None]:
+        """Run tests; the report is None if pytest produced none (crash, timeout)."""
+        result, xml = self._run_junit(info, args, timeout)
         try:
-            report = parse_junit(xml) if xml else None
+            return result, (parse_junit(xml) if xml else None)
         except ValueError:
-            report = None
-        return result, report
+            return result, None
+
+    def run_outcomes(
+        self, info: ProjectInfo, args: list[str] | None = None, timeout: int = 300
+    ) -> tuple[ExecResult, dict[str, str] | None]:
+        """Run tests; returns test id -> outcome (None if pytest produced no report)."""
+        result, xml = self._run_junit(info, args, timeout)
+        try:
+            return result, (parse_outcomes(xml) if xml else None)
+        except ValueError:
+            return result, None
 
     def destroy(self) -> None:
         if self.name:
