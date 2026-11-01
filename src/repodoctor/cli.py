@@ -468,10 +468,23 @@ def eval_run(
 
 
 @app.command("eval-report")
-def eval_report(results_file: Path) -> None:
+def eval_report(
+    results_file: Path,
+    show: str | None = typer.Option(
+        None, "--show", help="Case id: print its diff, failure details and the real fix's PR"
+    ),
+) -> None:
     """Print the summary of a finished (or interrupted) eval run."""
-    typer.echo(summarize(load_results(results_file)))
-    
+    results = load_results(results_file)
+    if not show:
+        typer.echo(summarize(results))
+        return
+    for r in (r for r in results if r.case_id == show):
+        typer.echo(f"== {r.case_id} trial {r.trial}: {r.outcome} ==")
+        if r.detail:
+            typer.echo(r.detail)
+        typer.echo(f"Maintainers' fix: {r.gold_pr}\n")
+        typer.echo(r.diff or "(no diff)")
 
 if __name__ == "__main__":
     app()

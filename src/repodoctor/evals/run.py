@@ -26,6 +26,8 @@ class CaseResult:
     files_changed: list[str] = field(default_factory=list)
     touched_gold_files: bool = False
     detail: str = ""
+    diff: str = ""
+    gold_pr: str = ""
 
 
 def classify(final: dict, grade: dict | None) -> str:
@@ -92,6 +94,8 @@ def run_case(
         files_changed=files,
         touched_gold_files=bool(set(files) & set(case.src_files)),
         detail=_detail(outcome, final, grade),
+        diff=final.get("full_diff") or final.get("diff") or "",
+        gold_pr=f"https://github.com/{case.repo}/pull/{case.fix_pr}",
     )
 
 
