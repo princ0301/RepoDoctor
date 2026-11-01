@@ -1,5 +1,6 @@
 """Wires everything together: workspace -> sandbox -> models -> graph -> final state."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,7 +10,22 @@ from repodoctor.graph import build_graph
 from repodoctor.models import build_chain
 from repodoctor.nodes.search_tools import make_search_tools
 from repodoctor.schemas import ExploreResult, FixProposal, ReproTest
-from repodoctor.tools.repo import clone_repo, detect_project, get_diff_since, remove_dir
+from repodoctor.tools.github import (
+    fetch_issue,
+    find_fixing_pr,
+    format_issue_body,
+    github_client,
+)
+from repodoctor.tools.issue_ref import IssueRef
+from repodoctor.tools.policy import policy_mentions
+from repodoctor.tools.repo import (
+    checkout_commit,
+    clone_issue_repo,
+    clone_repo,
+    detect_project,
+    get_diff_since,
+    remove_dir,
+)
 from repodoctor.tools.sandbox import Sandbox, ensure_image
 from repodoctor.tracing import run_config
 
@@ -27,6 +43,13 @@ class FixRequest:
     target_tests: list[str] = field(default_factory=list)
 
 
+@dataclass
+class IntakeInfo:
+    issue_state: str
+    fixing_pr_url: str | None  # set in --replay mode
+    policy_hits: list[str]
+
+
 def parse_issue_file(text: str) -> tuple[str, str]:
     """First line is the title (leading '#' allowed); the rest is the body."""
     lines = text.strip().splitlines()
@@ -36,7 +59,7 @@ def parse_issue_file(text: str) -> tuple[str, str]:
 
 
 def prepare_workdir(src: Path, settings: Settings) -> Path:
-    """Copy the repo into the work dir. The agent never touches your original."""
+    """Copy a local repo into the work dir. The agent never touches your original."""
     src = src.resolve()
     if not (src / ".git").exists():
         raise RunnerError(f"{src} is not a git repository (commit your changes first)")
@@ -47,8 +70,17 @@ def prepare_workdir(src: Path, settings: Settings) -> Path:
     return dest
 
 
-def run_fix(req: FixRequest, settings: Settings) -> dict:
-    workdir = prepare_workdir(req.repo_dir, settings)
+def execute(
+    workdir: Path,
+    title: str,
+    body: str,
+    targets: list[str],
+    settings: Settings,
+    *,
+    run_name: str,
+    tags: list[str],
+    metadata: dict,
+) -> dict:
     info = detect_project(workdir)
     if not info.supported:
         raise RunnerError(f"unsupported project: {info.reason}")
@@ -67,20 +99,83 @@ def run_fix(req: FixRequest, settings: Settings) -> dict:
             explorer=explorer, summarizer=summarizer, fixer=fixer, repro_writer=repro_writer,
         )
         config = run_config(
-            f"fix:{req.repo_dir.name}",
-            tags=["fix-loop", "own-test" if req.target_tests else "generated-test"],
+            run_name,
+            tags=["fix-loop", "own-test" if targets else "generated-test", *tags],
             metadata={
-                "repo": req.repo_dir.name,
                 "llm_explore": settings.llm_explore,
                 "llm_fix": settings.llm_fix,
                 "max_attempts": settings.max_attempts,
+                **metadata,
             },
         )
-        initial: dict = {"issue_title": req.issue_title, "issue_body": req.issue_body}
-        if req.target_tests:
-            initial["target_tests"] = list(req.target_tests)
+        initial: dict = {"issue_title": title, "issue_body": body}
+        if targets:
+            initial["target_tests"] = list(targets)
 
         final = build_graph(deps).invoke(initial, config=config)
         if final.get("success") and final.get("base_sha"):
             final["full_diff"] = get_diff_since(workdir, final["base_sha"])
         return final
+
+
+def run_fix(req: FixRequest, settings: Settings) -> dict:
+    """Local mode: a repo directory plus an issue file."""
+    workdir = prepare_workdir(req.repo_dir, settings)
+    return execute(
+        workdir, req.issue_title, req.issue_body, req.target_tests, settings,
+        run_name=f"fix:{req.repo_dir.name}",
+        tags=["local"],
+        metadata={"repo": req.repo_dir.name},
+    )
+
+
+def run_fix_issue(
+    ref: IssueRef,
+    settings: Settings,
+    *,
+    replay: bool,
+    targets: list[str],
+    log: Callable[[str], None] = lambda _msg: None,
+) -> tuple[dict, IntakeInfo]:
+    """GitHub mode: fetch the issue, clone the repo, run the loop. Nothing is pushed."""
+    with github_client(settings.github_token) as client:
+        issue = fetch_issue(client, ref)
+        if issue.is_pull_request:
+            raise RunnerError(f"{ref.full_name}#{ref.number} is a pull request, not an issue")
+        log(f"Issue:    {issue.title} [{issue.state}] labels={issue.labels or '-'}")
+        if issue.assignees:
+            log(f"WARN      already assigned to {', '.join(issue.assignees)}")
+
+        pr = None
+        if replay:
+            if issue.state != "closed":
+                raise RunnerError("--replay needs a closed issue with a merged fix")
+            pr = find_fixing_pr(client, ref)
+        elif issue.state == "closed":
+            raise RunnerError(
+                "this issue is closed, so the fix is probably already in the default branch. "
+                "Use --replay to run the agent on the code as it was before the fix."
+            )
+
+    dest = settings.work_dir.resolve() / f"{ref.owner}__{ref.repo}"
+    remove_dir(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    log(f"Cloning {ref.full_name} ...")
+    clone_issue_repo(ref, dest)
+    if pr is not None:
+        checkout_commit(dest, pr.base_sha)
+        log(f"Replay:   code as of {pr.base_sha[:10]}, before the fix in PR #{pr.number}")
+
+    hits = policy_mentions(dest)
+    if hits:
+        log("WARN      contribution docs mention AI. Read them before opening any PR:")
+        for h in hits:
+            log(f"            {h}")
+
+    final = execute(
+        dest, issue.title, format_issue_body(issue), targets, settings,
+        run_name=f"fix:{ref.full_name}#{ref.number}",
+        tags=["github-replay" if pr else "github"],
+        metadata={"repo": ref.full_name, "issue": ref.number, "replay": replay},
+    )
+    return final, IntakeInfo(issue.state, pr.url if pr else None, hits)

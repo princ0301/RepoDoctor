@@ -1,5 +1,6 @@
 """Git operations and project detection for a cloned repo."""
 
+import re
 import os
 import shutil
 import stat
@@ -21,6 +22,7 @@ _REQ_CANDIDATES = (
     "dev-requirements.txt", "test-requirements.txt",
     "requirements/dev.txt", "requirements/test.txt", "requirements/tests.txt",
 )
+_SHA = re.compile(r"[0-9a-f]{40}")
 
 class GitError(RuntimeError):
     """A git command failed."""
@@ -171,3 +173,13 @@ def commit_files(root: Path, paths: list[str], message: str) -> str:
 def get_diff_since(root: Path, base: str) -> str:
     """Everything that differs from `base`: committed test + staged fix."""
     return run_git("diff", "--no-color", base, cwd=root)
+
+def checkout_commit(root: Path, sha: str) -> None:
+    """Detach HEAD at `sha`, fetching it (shallow) if the clone does not have it."""
+    if not _SHA.fullmatch(sha):
+        raise GitError(f"not a full commit sha: {sha!r}")
+    try:
+        run_git("cat-file", "-e", f"{sha}^{{commit}}", cwd=root)
+    except GitError:
+        run_git("fetch", "--depth", "1", "origin", sha, cwd=root, timeout=300)
+    run_git("checkout", "--detach", "-q", sha, cwd=root)

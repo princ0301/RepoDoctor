@@ -137,7 +137,7 @@ def make_reproduce(deps: Deps):
             if problem is None:
                 path = root / rel
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(test.code, encoding="utf-8", newline="\n")
+                path.write_text(test.code.rstrip() + "\n", encoding="utf-8", newline="\n")
                 res, report = deps.sandbox.run_suite(
                     deps.info, args=[node_id], timeout=s.sandbox_timeout_s
                 )

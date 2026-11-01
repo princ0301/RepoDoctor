@@ -16,6 +16,7 @@ from repodoctor.tools.repo import (
     head_sha,
     commit_files,
     get_diff_since,
+    checkout_commit,
 )
 
 
@@ -167,3 +168,19 @@ def test_get_diff_since_includes_commits_and_staged_changes(cloned):
     get_diff(cloned, ["app.py"])  # stages the change
     diff = get_diff_since(cloned, base)
     assert "tests/test_new.py" in diff and "+x = 2" in diff
+
+def test_checkout_commit_detaches_at_an_existing_commit(tmp_path):
+    src = make_repo(tmp_path / "src", {"app.py": "v1\n"})
+    first = head_sha(src)
+    write(src, "app.py", "v2\n")
+    run_git("add", "-A", cwd=src)
+    run_git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "two", cwd=src)
+    clone = clone_repo(src.as_uri(), tmp_path / "clone", depth=10)
+    checkout_commit(clone, first)
+    assert head_sha(clone) == first
+    assert (clone / "app.py").read_text() == "v1\n"
+
+
+def test_checkout_commit_rejects_anything_but_a_full_sha(cloned):
+    with pytest.raises(GitError):
+        checkout_commit(cloned, "--upload-pack=evil")

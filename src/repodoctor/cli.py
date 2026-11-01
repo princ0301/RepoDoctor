@@ -5,11 +5,18 @@ import httpx
 import typer
 from dotenv import load_dotenv
 
-from repodoctor.config import get_settings
+from repodoctor.config import Settings, get_settings
 from repodoctor.demo import make_demo
 from repodoctor.graph import build_hello_graph
 from repodoctor.models import ENDPOINTS, ModelConfigError, make_chat_model, probe, role_specs
-from repodoctor.runner import FixRequest, RunnerError, parse_issue_file, run_fix
+from repodoctor.runner import (
+    FixRequest,
+    RunnerError,
+    parse_issue_file,
+    run_fix,
+    run_fix_issue,
+)
+from repodoctor.tools.github import GitHubError
 from repodoctor.tools.issue_ref import (
     InvalidIssueUrl,
     IssueRef,
@@ -30,6 +37,10 @@ from repodoctor.tools.sandbox import Sandbox, SandboxError, ensure_image, image_
 load_dotenv()
 
 app = typer.Typer(no_args_is_help=True, help="RepoDoctor: autonomous issue fixer")
+
+RUN_ERRORS = (
+    RunnerError, GitHubError, ModelConfigError, SandboxError, GitError, ValueError,
+)
 
 
 def _resolve_issue(url: str) -> IssueRef:
@@ -53,6 +64,29 @@ def _clone_and_detect(ref: IssueRef) -> tuple[Path, ProjectInfo]:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
     return dest, detect_project(dest)
+
+
+def _print_result(final: dict, settings: Settings) -> None:
+    typer.echo(f"Relevant files: {', '.join(final.get('relevant_files', [])) or '-'}")
+    typer.echo(f"Hypothesis:     {final.get('hypothesis', '-')}")
+    if final.get("repro_file"):
+        typer.echo(
+            f"Generated test: {final['target_tests'][0]} "
+            f"(accepted on attempt {final.get('repro_attempts', 1)})"
+        )
+    typer.echo(f"Fix attempts:   {final.get('attempts', 0)}/{settings.max_attempts}")
+
+    if final.get("error"):
+        typer.echo(f"\nERROR   {final['error']}")
+        raise typer.Exit(1)
+    diff = final.get("full_diff") or final.get("diff")
+    if diff:
+        typer.echo("\n" + diff)
+    if final.get("success"):
+        typer.echo("RESULT: SUCCESS (nothing was pushed; the diff above is the change)")
+        return
+    typer.echo(f"RESULT: FAILED\nLast feedback:\n{final.get('feedback', '')}")
+    raise typer.Exit(1)
 
 
 @app.command()
@@ -267,30 +301,42 @@ def fix(
     try:
         title, body = parse_issue_file(issue_file.read_text(encoding="utf-8"))
         final = run_fix(FixRequest(repo_dir, title, body, list(test or [])), settings)
-    except (RunnerError, ModelConfigError, SandboxError, GitError, ValueError) as e:
+    except RUN_ERRORS as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
+    _print_result(final, settings)
 
-    typer.echo(f"Relevant files: {', '.join(final.get('relevant_files', [])) or '-'}")
-    typer.echo(f"Hypothesis:     {final.get('hypothesis', '-')}")
-    if final.get("repro_file"):
-        typer.echo(
-            f"Generated test: {final['target_tests'][0]} "
-            f"(accepted on attempt {final.get('repro_attempts', 1)})"
+
+@app.command("fix-issue")
+def fix_issue(
+    url: str,
+    replay: bool = typer.Option(
+        False,
+        "--replay",
+        help="Closed issue: run on the code as it was before the merged fix",
+    ),
+    test: list[str] | None = typer.Option(
+        None, "--test", help="Your own failing test id (default: the agent writes one)"
+    ),
+) -> None:
+    """Run the fix loop on a real GitHub issue (repo must be in ALLOWED_REPOS)."""
+    ref = _resolve_issue(url)
+    settings = get_settings()
+    if not settings.github_token:
+        typer.echo("WARN    GITHUB_TOKEN not set: GitHub allows only 60 API requests/hour")
+    try:
+        final, intake = run_fix_issue(
+            ref, settings, replay=replay, targets=list(test or []), log=typer.echo
         )
-    typer.echo(f"Fix attempts:   {final.get('attempts', 0)}/{settings.max_attempts}")
-
-    if final.get("error"):
-        typer.echo(f"\nERROR   {final['error']}")
-        raise typer.Exit(1)
-    diff = final.get("full_diff") or final.get("diff")
-    if diff:
-        typer.echo("\n" + diff)
-    if final.get("success"):
-        typer.echo("RESULT: SUCCESS (nothing was pushed; the diff above is the change)")
-        return
-    typer.echo(f"RESULT: FAILED\nLast feedback:\n{final.get('feedback', '')}")
-    raise typer.Exit(1)
+    except RUN_ERRORS as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    typer.echo("")
+    try:
+        _print_result(final, settings)
+    finally:
+        if intake.fixing_pr_url:
+            typer.echo(f"\nCompare with the real fix: {intake.fixing_pr_url}")
 
 
 if __name__ == "__main__":
