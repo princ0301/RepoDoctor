@@ -391,6 +391,9 @@ def eval_discover(
 def eval_build(
     specs_file: Path = typer.Option(Path("evals/specs.json"), "--specs"),
     out: Path = typer.Option(Path("evals/cases.json"), "--out"),
+    retry_rejected: bool = typer.Option(
+        False, "--retry-rejected", help="Try again the specs rejected in earlier builds"
+    ),
 ) -> None:
     """Validate specs and compute ground truth (which tests the fix must turn green)."""
     if not specs_file.exists():
@@ -399,16 +402,29 @@ def eval_build(
     settings = get_settings()
     cases = load_cases(out) if out.exists() else []
     done = {c.id for c in cases}
+    rejected_file = out.with_suffix(".rejected.json")
+    rejected: dict[str, str] = (
+        json.loads(rejected_file.read_text(encoding="utf-8")) if rejected_file.exists() else {}
+    )
     with github_client(settings.github_token) as client:
         for spec in load_specs(specs_file):
-            if case_id(spec.repo, spec.issue) in done:
-                typer.echo(f"Skipping {spec.repo}#{spec.issue} (already built)")
+            cid = case_id(spec.repo, spec.issue)
+            if cid in done:
+                typer.echo(f"Skipping {cid} (already built)")
+                continue
+            if cid in rejected and not retry_rejected:
+                typer.echo(f"Skipping {cid} (rejected before: {rejected[cid][:80]})")
                 continue
             typer.echo(f"Building {spec.repo}#{spec.issue} (PR #{spec.fix_pr}) ...")
             try:
                 case = build_case(spec, settings, client, typer.echo)
-            except (CaseRejected, GitHubError, GitError, SandboxError, RepoNotAllowed) as e:
+            except (CaseRejected, RepoNotAllowed) as e:
                 typer.echo(f"  REJECTED  {e}")
+                rejected[cid] = str(e)[:200]
+                rejected_file.write_text(json.dumps(rejected, indent=2), encoding="utf-8")
+                continue
+            except (GitHubError, GitError, SandboxError) as e:
+                typer.echo(f"  ERROR     {e} (not recorded as rejected; rerun to retry)")
                 continue
             cases.append(case)
             save_cases(out, cases)
@@ -419,11 +435,26 @@ def eval_build(
     typer.echo(f"{len(cases)} case(s) in {out}")
 
 
+def _dev_ids(path: Path = Path("evals/dev_ids.txt")) -> set[str]:
+    if not path.exists():
+        typer.echo(f"ERROR   {path} does not exist")
+        raise typer.Exit(1)
+    return {
+        ln.strip()
+        for ln in path.read_text(encoding="utf-8").splitlines()
+        if ln.strip() and not ln.startswith("#")
+    }
+
+
 @app.command("eval-run")
 def eval_run(
     cases_file: Path = typer.Option(Path("evals/cases.json"), "--cases"),
     trials: int = typer.Option(1, help="Runs per case (use 3+ for stable numbers)"),
-    limit: int = typer.Option(0, help="Only the first N cases (0 = all)"),
+    limit: int = typer.Option(0, help="Only the first N cases after filtering (0 = all)"),
+    per_repo: int = typer.Option(0, "--per-repo", help="At most N cases from each repo"),
+    split: str | None = typer.Option(
+        None, "--split", help="'dev' or 'heldout' (dev ids are listed in evals/dev_ids.txt)"
+    ),
     only: list[str] | None = typer.Option(None, "--only", help="Case id(s) to run"),
     label: str = typer.Option("run", help="Names this run in results and LangSmith"),
 ) -> None:
@@ -431,10 +462,25 @@ def eval_run(
     if not cases_file.exists():
         typer.echo(f"ERROR   {cases_file} does not exist (run eval-build first)")
         raise typer.Exit(1)
+    if split not in (None, "dev", "heldout"):
+        typer.echo("ERROR   --split must be 'dev' or 'heldout'")
+        raise typer.Exit(1)
+
     settings = get_settings()
     cases = load_cases(cases_file)
     if only:
         cases = [c for c in cases if c.id in only]
+    if split:
+        dev = _dev_ids()
+        cases = [c for c in cases if (c.id in dev) == (split == "dev")]
+    if per_repo:
+        taken: dict[str, int] = {}
+        picked = []
+        for c in cases:
+            if taken.get(c.repo, 0) < per_repo:
+                picked.append(c)
+                taken[c.repo] = taken.get(c.repo, 0) + 1
+        cases = picked
     if limit:
         cases = cases[:limit]
     try:
@@ -451,7 +497,7 @@ def eval_run(
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "meta.json").write_text(
         json.dumps({
-            "label": label, "trials": trials, "cases": [c.id for c in cases],
+            "label": label, "trials": trials, "split": split, "cases": [c.id for c in cases],
             "llm_explore": settings.llm_explore, "llm_fix": settings.llm_fix,
             "llm_fallbacks": settings.fallback_specs,
             "max_attempts": settings.max_attempts,
@@ -459,7 +505,7 @@ def eval_run(
         }, indent=2),
         encoding="utf-8",
     )
-    typer.echo(f"Results: {out_dir / 'results.jsonl'}\n")
+    typer.echo(f"{len(cases)} case(s) x {trials} trial(s). Results: {out_dir / 'results.jsonl'}\n")
     results = run_eval(
         cases, settings, trials=trials, label=label,
         results_file=out_dir / "results.jsonl", log=typer.echo,

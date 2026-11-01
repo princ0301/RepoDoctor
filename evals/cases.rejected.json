@@ -1,0 +1,3 @@
+{
+  "python-humanize__humanize-51": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
+}

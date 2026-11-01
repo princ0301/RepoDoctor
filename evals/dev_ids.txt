@@ -1,0 +1,8 @@
+# dev set: tune on these; report on everything else
+python-humanize__humanize-24
+python-humanize__humanize-62
+python-humanize__humanize-122
+python-humanize__humanize-154
+andialbrecht__sqlparse-632
+pallets__click-3084
+prettytable__prettytable-398

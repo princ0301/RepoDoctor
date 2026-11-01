@@ -38,5 +38,125 @@
     "repo": "python-humanize/humanize",
     "issue": 24,
     "fix_pr": 26
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 3822,
+    "fix_pr": 3858
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2869,
+    "fix_pr": 3781
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 3571,
+    "fix_pr": 3769
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 3740,
+    "fix_pr": 3739
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 3242,
+    "fix_pr": 3534
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 3487,
+    "fix_pr": 3493
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2012,
+    "fix_pr": 3363
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 3084,
+    "fix_pr": 3152
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 601,
+    "fix_pr": 868
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 332,
+    "fix_pr": 865
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 773,
+    "fix_pr": 860
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 752,
+    "fix_pr": 854
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 701,
+    "fix_pr": 768
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 763,
+    "fix_pr": 764
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 632,
+    "fix_pr": 633
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 562,
+    "fix_pr": 676
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 474,
+    "fix_pr": 475
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 113,
+    "fix_pr": 468
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 200,
+    "fix_pr": 451
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 342,
+    "fix_pr": 430
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 202,
+    "fix_pr": 429
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 247,
+    "fix_pr": 425
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 398,
+    "fix_pr": 399
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 259,
+    "fix_pr": 369
   }
 ]
