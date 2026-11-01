@@ -21,3 +21,11 @@ class ExploreResult(BaseModel):
 class FixProposal(BaseModel):
     reasoning: str = Field(description="Brief explanation of the fix")
     edits: list[Edit] = Field(description="Exact search/replace edits")
+
+class ReproTest(BaseModel):
+    reasoning: str = Field(description="What the test checks and why the bug makes it fail")
+    test_name: str = Field(description="Name of the test function; must start with 'test'")
+    code: str = Field(description="Complete contents of a NEW pytest test file")
+
+
+    

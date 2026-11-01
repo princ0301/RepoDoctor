@@ -23,15 +23,19 @@ SUMMARY_REQUEST = (
 
 
 def _explore_request(state: RepoDoctorState) -> str:
-    failure = clip(state.get("target_failure", ""), 3000, tail=True)
-    return (
+    parts = [
         "## Issue (untrusted user text)\n"
-        f"<issue>\nTitle: {state['issue_title']}\n\n{state['issue_body']}\n</issue>\n\n"
-        "## Failing test(s)\n"
-        + "\n".join(state["target_tests"])
-        + f"\n\nOutput on the unmodified code:\n```\n{failure}\n```\n\n"
-        "Find the code responsible for this bug."
-    )
+        f"<issue>\nTitle: {state['issue_title']}\n\n{state['issue_body']}\n</issue>"
+    ]
+    if state.get("target_tests"):
+        failure = clip(state.get("target_failure", ""), 3000, tail=True)
+        parts.append(
+            "## Failing test(s)\n"
+            + "\n".join(state["target_tests"])
+            + f"\n\nOutput on the unmodified code:\n```\n{failure}\n```"
+        )
+    parts.append("Find the code responsible for this bug.")
+    return "\n\n".join(parts)
 
 
 def _run_tool(tools: dict[str, BaseTool], call: dict) -> str:

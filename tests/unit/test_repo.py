@@ -13,6 +13,9 @@ from repodoctor.tools.repo import (
     remove_dir,
     reset_to_clean,
     list_untracked,
+    head_sha,
+    commit_files,
+    get_diff_since,
 )
 
 
@@ -145,3 +148,22 @@ def test_remove_dir_deletes_readonly_files(tmp_path):
     os.chmod(f, stat.S_IREAD)
     remove_dir(d)
     assert not d.exists()
+
+def test_commit_files_survives_reset_and_leaves_other_files_alone(cloned):
+    write(cloned, "tests/test_new.py", "def test_x(): ...\n")
+    write(cloned, "other.txt", "x\n")
+    before = head_sha(cloned)
+    assert commit_files(cloned, ["tests/test_new.py"], "msg") != before
+    reset_to_clean(cloned, list_untracked(cloned))
+    assert (cloned / "tests" / "test_new.py").exists()
+    assert (cloned / "other.txt").exists()
+
+
+def test_get_diff_since_includes_commits_and_staged_changes(cloned):
+    base = head_sha(cloned)
+    write(cloned, "tests/test_new.py", "def test_x(): ...\n")
+    commit_files(cloned, ["tests/test_new.py"], "msg")
+    write(cloned, "app.py", "x = 2\n")
+    get_diff(cloned, ["app.py"])  # stages the change
+    diff = get_diff_since(cloned, base)
+    assert "tests/test_new.py" in diff and "+x = 2" in diff

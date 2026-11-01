@@ -6,8 +6,8 @@ from repodoctor.config import Settings
 from repodoctor.deps import Deps
 from repodoctor.graph import build_graph
 from repodoctor.nodes.search_tools import make_search_tools
-from repodoctor.schemas import Edit, ExploreResult, FixProposal
-from repodoctor.tools.repo import ProjectInfo
+from repodoctor.schemas import Edit, ExploreResult, FixProposal, ReproTest
+from repodoctor.tools.repo import ProjectInfo, run_git
 from repodoctor.tools.sandbox import ExecResult
 from repodoctor.tools.testreport import SuiteReport
 
@@ -28,10 +28,24 @@ GOOD = Edit(path="textkit.py", old="if len(text) < max_len:", new="if len(text) 
 BAD = Edit(path="textkit.py", old="this text does not exist", new="x")
 TOUCH_TEST = Edit(path="tests/test_text.py", old="== 'hello'", new="== 'he...'")
 
+REPRO_CODE = (
+    "from textkit import truncate\n\n"
+    "def test_repro_exact():\n"
+    "    assert truncate('hello', 5) == 'hello'\n"
+)
+REPRO = ReproTest(reasoning="r", test_name="test_repro_exact", code=REPRO_CODE)
+REPRO_BAD_SYNTAX = ReproTest(
+    reasoning="r", test_name="test_repro_exact", code="def test_repro_exact(:\n"
+)
+REPRO_ID = "tests/test_repodoctor_repro.py::test_repro_exact"
+
 BASE = SuiteReport(total=2, passed=1, failed=1, failing={"tests.test_text::test_exact": "boom"})
 CLEAN = SuiteReport(total=2, passed=2)
 REGRESSED = SuiteReport(
     total=2, passed=1, failed=1, failing={"tests.test_text::test_other": "broke"}
+)
+NAME_ERROR = SuiteReport(
+    total=1, failed=1, failing={"t::x": "NameError: name 'foo' is not defined"}
 )
 
 
@@ -44,8 +58,15 @@ def scripted(items):
     return RunnableLambda(lambda _messages: queue.pop(0))
 
 
+def _default_target_report(code: int) -> SuiteReport:
+    if code == 0:
+        return SuiteReport(total=1, passed=1)
+    return SuiteReport(total=1, failed=1, failing={"t::x": "assert 'he...' == 'hello'"})
+
+
 class FakeSandbox:
-    """target: exit codes for target-test runs; suites: reports for full runs."""
+    """target: exit codes (or (code, report)) for target-test runs, in order.
+    suites: reports for full-suite runs, in order."""
 
     def __init__(self, target, suites, install_ok=True):
         self.target, self.suites, self.install_ok = list(target), list(suites), install_ok
@@ -58,8 +79,9 @@ class FakeSandbox:
 
     def run_suite(self, info, args=None, timeout=300):
         if args:
-            code = self.target.pop(0)
-            return ExecResult(code, f"target exit={code}", False, 0.0), SuiteReport()
+            item = self.target.pop(0)
+            code, report = item if isinstance(item, tuple) else (item, _default_target_report(item))
+            return ExecResult(code, f"target exit={code}", False, 0.0), report
         report = self.suites.pop(0)
         return ExecResult(0 if report.clean else 1, "suite output", False, 0.0), report
 
@@ -69,7 +91,7 @@ def repo(make_git_repo):
     return make_git_repo({"textkit.py": CODE, "tests/test_text.py": TEST})
 
 
-def run(repo, sandbox, proposals, explorer=None, max_attempts=3):
+def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET,), repros=()):
     tools = make_search_tools(repo)
     deps = Deps(
         settings=Settings(_env_file=None, max_attempts=max_attempts),
@@ -82,11 +104,15 @@ def run(repo, sandbox, proposals, explorer=None, max_attempts=3):
             lambda _m: ExploreResult(relevant_files=["textkit.py"], hypothesis="off by one")
         ),
         fixer=scripted(proposals),
+        repro_writer=scripted(repros),
     )
-    return build_graph(deps).invoke(
-        {"issue_title": "t", "issue_body": "b", "target_tests": [TARGET]}
-    )
+    state = {"issue_title": "t", "issue_body": "b"}
+    if targets:
+        state["target_tests"] = list(targets)
+    return build_graph(deps).invoke(state)
 
+
+# ---------- user-supplied failing test ----------
 
 def test_fixes_on_first_attempt_and_uses_explorer_tools(repo):
     explorer = scripted([
@@ -141,3 +167,41 @@ def test_aborts_when_target_already_passes(repo):
 def test_aborts_when_install_fails(repo):
     final = run(repo, FakeSandbox(target=[], suites=[], install_ok=False), [])
     assert "install failed" in final["error"]
+
+
+# ---------- the agent writes the failing test ----------
+
+def test_generates_a_reproduction_test_then_fixes(repo):
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [proposal(GOOD)], targets=(), repros=[REPRO])
+    assert final["success"] and final["attempts"] == 1
+    assert final["target_tests"] == [REPRO_ID]
+    assert final["repro_file"] == "tests/test_repodoctor_repro.py"
+    assert "tests/test_repodoctor_repro.py" in run_git("ls-files", cwd=repo)
+    assert final["base_sha"] != run_git("rev-parse", "HEAD", cwd=repo).strip()
+
+
+def test_rejects_a_repro_that_passes_then_accepts_a_better_one(repo):
+    sandbox = FakeSandbox(target=[0, 1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [proposal(GOOD)], targets=(), repros=[REPRO, REPRO])
+    assert final["success"] and final["repro_attempts"] == 2
+
+
+def test_rejects_a_repro_that_fails_for_the_wrong_reason(repo):
+    sandbox = FakeSandbox(target=[(1, NAME_ERROR), 1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [proposal(GOOD)], targets=(), repros=[REPRO, REPRO])
+    assert final["success"] and final["repro_attempts"] == 2
+
+
+def test_rejects_a_syntax_error_without_running_the_sandbox(repo):
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [proposal(GOOD)], targets=(), repros=[REPRO_BAD_SYNTAX, REPRO])
+    assert final["success"] and final["repro_attempts"] == 2
+
+
+def test_stops_before_fixing_when_no_valid_reproduction_exists(repo):
+    sandbox = FakeSandbox(target=[0, 0, 0], suites=[BASE])
+    final = run(repo, sandbox, [], targets=(), repros=[REPRO] * 3)
+    assert "reproduces the issue" in final["error"]
+    assert final.get("attempts", 0) == 0
+    assert not (repo / "tests" / "test_repodoctor_repro.py").exists()

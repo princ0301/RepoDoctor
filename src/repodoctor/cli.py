@@ -1,13 +1,14 @@
 import shutil
 from pathlib import Path
 
+import httpx
 import typer
 from dotenv import load_dotenv
 
 from repodoctor.config import get_settings
 from repodoctor.demo import make_demo
 from repodoctor.graph import build_hello_graph
-from repodoctor.models import ModelConfigError, make_chat_model, probe, role_specs
+from repodoctor.models import ENDPOINTS, ModelConfigError, make_chat_model, probe, role_specs
 from repodoctor.runner import FixRequest, RunnerError, parse_issue_file, run_fix
 from repodoctor.tools.issue_ref import (
     InvalidIssueUrl,
@@ -69,7 +70,6 @@ def doctor() -> None:
 
     s = get_settings()
     required = {
-        "GOOGLE_API_KEY": s.google_api_key,
         "OPENROUTER_API_KEY": s.openrouter_api_key,
         "GITHUB_TOKEN": s.github_token,
         "GITHUB_USERNAME": s.github_username,
@@ -78,11 +78,41 @@ def doctor() -> None:
     for label, value in required.items():
         typer.echo(f"{'OK     ' if value else 'MISSING'} {label}")
 
+    if s.nvidia_api_key:
+        typer.echo("OK      NVIDIA_API_KEY")
+    else:
+        typer.echo("INFO    NVIDIA_API_KEY not set (NVIDIA models via OpenRouter only)")
+
     typer.echo(f"INFO    DRY_RUN={s.dry_run}")
     typer.echo(f"INFO    explore={s.llm_explore}  fix={s.llm_fix}")
     typer.echo(f"INFO    fallbacks={s.fallback_specs or '-'}")
     if not s.dry_run:
         typer.echo("WARN    DRY_RUN is off: the agent can push branches and open PRs")
+
+
+@app.command("nvidia-models")
+def nvidia_models(
+    contains: str = typer.Option("nemotron", help="Only show model ids containing this text"),
+) -> None:
+    """List models available on NVIDIA's API with your key (to pick LLM_EXPLORE / LLM_FIX)."""
+    key = get_settings().nvidia_api_key
+    if not key:
+        typer.echo("ERROR   NVIDIA_API_KEY is not set")
+        raise typer.Exit(1)
+    try:
+        r = httpx.get(
+            f"{ENDPOINTS['nvidia'][0]}/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=30,
+        )
+        r.raise_for_status()
+    except httpx.HTTPError as e:
+        typer.echo(f"ERROR   {type(e).__name__}: {e}")
+        raise typer.Exit(1) from e
+    ids = sorted(
+        m["id"] for m in r.json().get("data", []) if contains.lower() in m["id"].lower()
+    )
+    typer.echo("\n".join(ids) or "(no matching models)")
 
 
 @app.command("check-llm")
@@ -153,8 +183,10 @@ def smoke(url: str) -> None:
             r = sb.install(info)
             if not r.ok:
                 typer.echo(r.output)
-                typer.echo(f"\nERROR   install failed (exit {r.exit_code}, "
-                           f"{'timeout' if r.timed_out else 'error'})")
+                typer.echo(
+                    f"\nERROR   install failed (exit {r.exit_code}, "
+                    f"{'timeout' if r.timed_out else 'error'})"
+                )
                 raise typer.Exit(3)
             sb.lock_network()
             typer.echo("Running tests (network off) ...")
@@ -166,8 +198,10 @@ def smoke(url: str) -> None:
     if report is None:
         typer.echo(r.output)
         why = "timeout" if r.timed_out else f"exit {r.exit_code}"
-        typer.echo(f"\nERROR   no test report produced ({why}); "
-                   "pytest may have crashed during collection")
+        typer.echo(
+            f"\nERROR   no test report produced ({why}); "
+            "pytest may have crashed during collection"
+        )
         raise typer.Exit(1)
 
     typer.echo(
@@ -177,8 +211,9 @@ def smoke(url: str) -> None:
     if report.clean:
         typer.echo("Result: CLEAN baseline")
         return
-    typer.echo(f"Result: {len(report.failing)} pre-existing failures "
-               "(the agent will ignore these)")
+    typer.echo(
+        f"Result: {len(report.failing)} pre-existing failures (the agent will ignore these)"
+    )
     for test_id, msg in list(report.failing.items())[:10]:
         typer.echo(f"  - {test_id}: {msg}")
     if len(report.failing) > 10:
@@ -187,51 +222,72 @@ def smoke(url: str) -> None:
 
 @app.command("make-demo")
 def make_demo_cmd() -> None:
-    """Create a tiny repo with one seeded bug for a first end-to-end run."""
+    """Create tiny repos with one seeded bug for end-to-end runs."""
     root = get_settings().work_dir.resolve().parent / "demo"
     demo = make_demo(root)
-    typer.echo(f"Created {demo.repo_dir}\n")
-    typer.echo("Run the agent on it:")
+    typer.echo(f"Created {demo.repo_dir}")
+    typer.echo(f"Created {demo.blind_repo_dir}\n")
+    typer.echo("1) You supply the failing test:")
     typer.echo(
         f'  uv run repodoctor fix --repo-dir "{demo.repo_dir}" '
         f'--issue-file "{demo.issue_file}" --test {demo.test_id}'
+    )
+    typer.echo("\n2) The agent writes the failing test itself:")
+    typer.echo(
+        f'  uv run repodoctor fix --repo-dir "{demo.blind_repo_dir}" '
+        f'--issue-file "{demo.issue_file}"'
     )
 
 
 @app.command()
 def fix(
     repo_dir: Path = typer.Option(
-        ..., "--repo-dir", exists=True, file_okay=False,
+        ...,
+        "--repo-dir",
+        exists=True,
+        file_okay=False,
         help="Local git repo containing the bug (changes must be committed)",
     ),
     issue_file: Path = typer.Option(
-        ..., "--issue-file", exists=True, dir_okay=False,
+        ...,
+        "--issue-file",
+        exists=True,
+        dir_okay=False,
         help="Markdown file: first line is the title, the rest is the body",
     ),
-    test: list[str] = typer.Option(
-        ..., "--test", help="pytest node id that must pass after the fix (repeatable)"
+    test: list[str] | None = typer.Option(
+        None,
+        "--test",
+        help="pytest node id that must pass after the fix (repeatable). "
+        "Omit it and the agent writes the failing test itself.",
     ),
 ) -> None:
     """Run the fix loop on a local repo."""
     settings = get_settings()
     try:
         title, body = parse_issue_file(issue_file.read_text(encoding="utf-8"))
-        final = run_fix(FixRequest(repo_dir, title, body, test), settings)
+        final = run_fix(FixRequest(repo_dir, title, body, list(test or [])), settings)
     except (RunnerError, ModelConfigError, SandboxError, GitError, ValueError) as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
 
     typer.echo(f"Relevant files: {', '.join(final.get('relevant_files', [])) or '-'}")
     typer.echo(f"Hypothesis:     {final.get('hypothesis', '-')}")
-    typer.echo(f"Attempts:       {final.get('attempts', 0)}/{settings.max_attempts}")
+    if final.get("repro_file"):
+        typer.echo(
+            f"Generated test: {final['target_tests'][0]} "
+            f"(accepted on attempt {final.get('repro_attempts', 1)})"
+        )
+    typer.echo(f"Fix attempts:   {final.get('attempts', 0)}/{settings.max_attempts}")
 
     if final.get("error"):
         typer.echo(f"\nERROR   {final['error']}")
         raise typer.Exit(1)
-    if final.get("diff"):
-        typer.echo("\n" + final["diff"])
+    diff = final.get("full_diff") or final.get("diff")
+    if diff:
+        typer.echo("\n" + diff)
     if final.get("success"):
-        typer.echo("RESULT: SUCCESS (nothing was pushed; the diff above is the fix)")
+        typer.echo("RESULT: SUCCESS (nothing was pushed; the diff above is the change)")
         return
     typer.echo(f"RESULT: FAILED\nLast feedback:\n{final.get('feedback', '')}")
     raise typer.Exit(1)

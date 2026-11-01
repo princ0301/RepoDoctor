@@ -1,30 +1,40 @@
+"""Model factory: 'provider:model' specs -> LangChain chat models with fallbacks."""
+
 from collections.abc import Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.runnables import Runnable
 from langchain_core.tools import BaseTool, tool
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from repodoctor.config import Settings
 
+NVIDIA_URL = "https://integrate.api.nvidia.com/v1"
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
-PROVIDERS = ("google", "openrouter")
+
+# provider -> (base url, Settings field holding the key, env var name for messages)
+ENDPOINTS = {
+    "nvidia": (NVIDIA_URL, "nvidia_api_key", "NVIDIA_API_KEY"),
+    "openrouter": (OPENROUTER_URL, "openrouter_api_key", "OPENROUTER_API_KEY"),
+}
 ROLES = ("explore", "fix")
+
 
 class ModelConfigError(ValueError):
     """Bad model spec or missing credentials."""
 
+
 def parse_spec(spec: str) -> tuple[str, str]:
     provider, sep, model = spec.partition(":")
     provider, model = provider.strip().lower(), model.strip()
-    if not sep or not model or provider not in PROVIDERS:
+    if not sep or not model or provider not in ENDPOINTS:
         raise ModelConfigError(
             f"bad model spec {spec!r}: expected 'provider:model' "
-            f"with provider one of {', '.join(PROVIDERS)}"
+            f"with provider one of {', '.join(ENDPOINTS)}"
         )
     return provider, model
+
 
 def role_specs(role: str, settings: Settings) -> list[str]:
     if role not in ROLES:
@@ -32,27 +42,22 @@ def role_specs(role: str, settings: Settings) -> list[str]:
     primary = settings.llm_explore if role == "explore" else settings.llm_fix
     return [primary, *settings.fallback_specs]
 
+
 def make_chat_model(spec: str, settings: Settings) -> BaseChatModel:
     provider, model = parse_spec(spec)
-    if provider == "google":
-        if not settings.google_api_key:
-            raise ModelConfigError("GOOGLE_API_KEY is not set")
-        return ChatGoogleGenerativeAI(
-            model=model,
-            google_api_key=settings.google_api_key,
-            max_retries=2,
-            timeout=settings.llm_timeout_s,
-        )
-    if not settings.openrouter_api_key:
-        raise ModelConfigError("OPENROUTER_API_KEY is not set")
+    base_url, key_field, env_name = ENDPOINTS[provider]
+    key = getattr(settings, key_field)
+    if not key:
+        raise ModelConfigError(f"{env_name} is not set")
     return ChatOpenAI(
         model=model,
-        base_url=OPENROUTER_URL,
-        api_key=settings.openrouter_api_key,
+        base_url=base_url,
+        api_key=key,
         temperature=0,
         max_retries=2,
         timeout=settings.llm_timeout_s,
     )
+
 
 def adapt(
     model: BaseChatModel,
@@ -69,10 +74,10 @@ def adapt(
     if tools:
         return model.bind_tools(list(tools))
     if schema:
-        if isinstance(model, ChatOpenAI):
-            return model.with_structured_output(schema, method="function_calling")
-        return model.with_structured_output(schema)
+        # hosted open models rarely support native JSON-schema mode; tool calling works
+        return model.with_structured_output(schema, method="function_calling")
     return model
+
 
 def build_chain(
     role: str,
@@ -93,13 +98,18 @@ def build_chain(
     primary, *fallbacks = chains
     return primary.with_fallbacks(fallbacks) if fallbacks else primary
 
+
+# ---------- diagnostics (used by `repodoctor check-llm`) ----------
+
 @tool
 def ping(message: str) -> str:
-    """Reply to ping."""
+    """Reply to a ping."""
     return message
+
 
 class _Probe(BaseModel):
     answer: str
+
 
 def probe(model: BaseChatModel) -> dict[str, str | None]:
     """Check tool calling and structured output. Value None means the check passed."""

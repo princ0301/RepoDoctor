@@ -35,3 +35,4 @@ class Deps:
     explorer: Runnable      # chat model with search tools bound
     summarizer: Runnable    # -> ExploreResult
     fixer: Runnable         # -> FixProposal
+    repro_writer: Runnable  # -> ReproTest

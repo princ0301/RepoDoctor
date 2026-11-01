@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # --- API keys ---
-    google_api_key: str = ""
+    nvidia_api_key: str = ""
     openrouter_api_key: str = ""
 
     # --- GitHub (classic token, public_repo scope) ---
@@ -20,12 +20,13 @@ class Settings(BaseSettings):
     # --- Models: "provider:model", provider is "google" or "openrouter" ---
     llm_explore: str = "openrouter:nvidia/nemotron-3.5-super-vl:free"
     llm_fix: str = "openrouter:nvidia/nemotron-3.5-super-vl:free"
-    llm_fallbacks: str = "openrouter:nvidia/nemotron-3.5-super-vl:free"
+    llm_fallbacks: str = ""
     llm_timeout_s: int = 120
 
     # --- Agent limits ---
     max_attempts: int = 3          # fix/verify retries
     explore_max_steps: int = 10    # tool-call rounds in the explorer
+    repro_max_attempts: int = 3    # tries to write a valid reproduction test
     fix_context_chars: int = 80_000
 
     # --- Sandbox ---

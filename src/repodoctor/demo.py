@@ -1,9 +1,9 @@
-"""A tiny repo with one seeded bug, for a first end-to-end run."""
+"""Tiny repos with one seeded bug, for end-to-end runs."""
 
 from dataclasses import dataclass
 from pathlib import Path
 
-from repodoctor.tools.repo import run_git
+from repodoctor.tools.repo import remove_dir, run_git
 
 DEMO_TEST_ID = "tests/test_text.py::test_truncate_text_exactly_max_len_is_unchanged"
 
@@ -26,7 +26,7 @@ def title_case(text: str) -> str:
     return " ".join(word.capitalize() for word in text.split())
 '''
 
-_TESTS = '''\
+_TESTS_BLIND = '''\
 from textkit import title_case, truncate, word_count
 
 
@@ -44,7 +44,9 @@ def test_truncate_short_text_unchanged():
 
 def test_truncate_long_text():
     assert truncate("hello world", 8) == "hello..."
+'''
 
+_EXTRA_TEST = '''
 
 def test_truncate_text_exactly_max_len_is_unchanged():
     assert truncate("hello", 5) == "hello"
@@ -61,17 +63,18 @@ Text that fits within max_len should never be shortened.
 
 @dataclass
 class Demo:
-    repo_dir: Path
+    repo_dir: Path          # has a failing test for the bug (use with --test)
+    blind_repo_dir: Path    # no test for the bug (the agent must write it)
     issue_file: Path
     test_id: str
 
 
-def make_demo(root: Path) -> Demo:
-    repo = root / "textkit"
-    repo.mkdir(parents=True, exist_ok=True)
+def _make_repo(repo: Path, tests: str) -> None:
+    remove_dir(repo)
+    repo.mkdir(parents=True)
     files = {
         "textkit.py": _TEXTKIT,
-        "tests/test_text.py": _TESTS,
+        "tests/test_text.py": tests,
         "requirements.txt": "# no runtime dependencies\n",
     }
     for rel, text in files.items():
@@ -84,6 +87,13 @@ def make_demo(root: Path) -> Demo:
         "-c", "user.name=demo", "-c", "user.email=demo@example.com",
         "commit", "-q", "-m", "initial", cwd=repo,
     )
+
+
+def make_demo(root: Path) -> Demo:
+    root.mkdir(parents=True, exist_ok=True)
+    repo, blind = root / "textkit", root / "textkit-blind"
+    _make_repo(repo, _TESTS_BLIND + _EXTRA_TEST)
+    _make_repo(blind, _TESTS_BLIND)
     issue = root / "ISSUE.md"
     issue.write_text(_ISSUE, encoding="utf-8", newline="\n")
-    return Demo(repo, issue, DEMO_TEST_ID)
+    return Demo(repo, blind, issue, DEMO_TEST_ID)

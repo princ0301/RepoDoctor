@@ -8,6 +8,7 @@ from repodoctor.nodes.fix import make_fix
 from repodoctor.nodes.setup import make_setup
 from repodoctor.nodes.verify import make_verify
 from repodoctor.state import RepoDoctorState
+from repodoctor.nodes.reproduce import make_reproduce  
 
 
 def _after(next_node: str):
@@ -27,16 +28,20 @@ def _after_verify(max_attempts: int):
 
 
 def build_graph(deps: Deps):
-    """setup -> explore -> fix -> verify -> (fix again | end)"""
+    """setup -> explore -> reproduce -> fix -> verify -> (fix again | end)"""
     g = StateGraph(RepoDoctorState)
     g.add_node("setup", make_setup(deps))
     g.add_node("explore", make_explore(deps))
+    g.add_node("reproduce", make_reproduce(deps))
     g.add_node("fix", make_fix(deps))
     g.add_node("verify", make_verify(deps))
 
     g.add_edge(START, "setup")
     g.add_conditional_edges("setup", _after("explore"), {"explore": "explore", END: END})
-    g.add_conditional_edges("explore", _after("fix"), {"fix": "fix", END: END})
+    g.add_conditional_edges(
+        "explore", _after("reproduce"), {"reproduce": "reproduce", END: END}
+    )
+    g.add_conditional_edges("reproduce", _after("fix"), {"fix": "fix", END: END})
     g.add_conditional_edges("fix", _after("verify"), {"verify": "verify", END: END})
     g.add_conditional_edges(
         "verify", _after_verify(deps.settings.max_attempts), {"fix": "fix", END: END}

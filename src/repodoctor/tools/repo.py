@@ -147,3 +147,27 @@ def detect_project(root: Path) -> ProjectInfo:
         requirement_files=req_files,
         requires_python=project.get("requires-python"),
     )
+
+def head_sha(root: Path) -> str:
+    return run_git("rev-parse", "HEAD", cwd=root).strip()
+
+
+def commit_files(root: Path, paths: list[str], message: str) -> str:
+    """Commit exactly `paths` in the LOCAL work clone (nothing is pushed). Returns new HEAD.
+
+    The generated reproduction test is committed so `git reset --hard` between fix
+    attempts keeps it, while the agent's edits are still thrown away.
+    """
+    run_git("add", "-A", "--", *paths, cwd=root)
+    run_git(
+        "-c", "user.name=RepoDoctor",
+        "-c", "user.email=repodoctor@users.noreply.github.com",
+        "commit", "-q", "--no-verify", "--no-gpg-sign", "-m", message,
+        cwd=root,
+    )
+    return head_sha(root)
+
+
+def get_diff_since(root: Path, base: str) -> str:
+    """Everything that differs from `base`: committed test + staged fix."""
+    return run_git("diff", "--no-color", base, cwd=root)

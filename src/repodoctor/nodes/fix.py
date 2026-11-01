@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from repodoctor.deps import Deps
-from repodoctor.nodes.util import clip
+from repodoctor.nodes.util import clip, render_files
 from repodoctor.prompts import load_prompt
 from repodoctor.schemas import Edit
 from repodoctor.state import RepoDoctorState
@@ -26,22 +26,22 @@ def _target_files(targets: list[str]) -> list[str]:
     return sorted({_norm(t.split("::")[0]) for t in targets})
 
 
-def _render_files(root: Path, paths: list[str], budget: int) -> str:
-    chunks: list[str] = []
-    used = 0
-    for p in paths:
-        try:
-            text = read_raw(root, p)
-        except SearchError as e:
-            chunks.append(f"### {p}\n(unavailable: {e})")
-            continue
-        block = f"### {p}\n```\n{text}\n```"
-        if chunks and used + len(block) > budget:
-            chunks.append(f"### {p}\n(omitted: context budget exhausted)")
-            continue
-        chunks.append(block)
-        used += len(block)
-    return "\n\n".join(chunks)
+# def _render_files(root: Path, paths: list[str], budget: int) -> str:
+#     chunks: list[str] = []
+#     used = 0
+#     for p in paths:
+#         try:
+#             text = read_raw(root, p)
+#         except SearchError as e:
+#             chunks.append(f"### {p}\n(unavailable: {e})")
+#             continue
+#         block = f"### {p}\n```\n{text}\n```"
+#         if chunks and used + len(block) > budget:
+#             chunks.append(f"### {p}\n(omitted: context budget exhausted)")
+#             continue
+#         chunks.append(block)
+#         used += len(block)
+#     return "\n\n".join(chunks)
 
 
 def _history_text(history: list[dict]) -> str:
@@ -72,9 +72,9 @@ def _fix_request(state: RepoDoctorState, root: Path, budget: int) -> str:
         + "\n```",
         f"## Investigation notes\n{state.get('hypothesis', '')}",
         "## Test file(s) (read-only, do not edit)\n"
-        + _render_files(root, _target_files(targets), TEST_FILE_BUDGET),
+        + render_files(root, _target_files(targets), TEST_FILE_BUDGET),
         "## Source files you may edit\n"
-        + _render_files(root, state["relevant_files"], budget),
+        + render_files(root, state["relevant_files"], budget),
     ]
     if state.get("history"):
         sections.append("## Previous attempts\n" + _history_text(state["history"]))

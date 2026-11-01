@@ -10,8 +10,6 @@ dependencies = [
     "langchain",
     "langgraph-checkpoint-sqlite",
     "langsmith",
-    # LLM providers
-    "langchain-google-genai",
     "langchain-openai",
     # Config and CLI
     "pydantic-settings",
@@ -21,6 +19,7 @@ dependencies = [
     "pygithub",
     "gitpython",
     "docker",
+    "httpx>=0.28.1",
 ]
 
 [project.scripts]
