@@ -1,5 +1,8 @@
 from pathlib import Path
 
+from langchain_core.exceptions import OutputParserException
+from pydantic import ValidationError
+
 from repodoctor.tools.paths import safe_resolve
 from repodoctor.tools.search import SearchError, read_raw
 
@@ -11,6 +14,11 @@ def clip(text: str, limit: int, *, tail: bool = False) -> str:
     if tail:
         return f"[... truncated ...]\n{text[-limit:]}"
     return f"{text[:limit]}\n[... truncated ...]"
+
+
+def is_malformed_output(e: Exception) -> bool:
+    """The model answered but not in the requested structure: its mistake, not an outage."""
+    return isinstance(e, ValidationError | OutputParserException)
 
 
 def existing_files(root: Path, paths: list[str], limit: int = 5) -> list[str]:
@@ -28,9 +36,10 @@ def existing_files(root: Path, paths: list[str], limit: int = 5) -> list[str]:
     return out[:limit]
 
 
-def render_files(root: Path, paths: list[str], budget: int) -> str:
-    """Files as fenced blocks (raw text, no line numbers) within a character budget."""
+def render_files(root: Path, paths: list[str], budget: int) -> tuple[str, list[str]]:
+    """Files as fenced blocks within a character budget; also returns the omitted paths."""
     chunks: list[str] = []
+    omitted: list[str] = []
     used = 0
     for p in paths:
         try:
@@ -40,8 +49,12 @@ def render_files(root: Path, paths: list[str], budget: int) -> str:
             continue
         block = f"### {p}\n```\n{text}\n```"
         if chunks and used + len(block) > budget:
-            chunks.append(f"### {p}\n(omitted: context budget exhausted)")
+            omitted.append(p)
+            chunks.append(
+                f"### {p}\n(NOT SHOWN: the context budget is exhausted. If you cannot "
+                "proceed without it, list it in need_more_files.)"
+            )
             continue
         chunks.append(block)
         used += len(block)
-    return "\n\n".join(chunks)
+    return "\n\n".join(chunks), omitted

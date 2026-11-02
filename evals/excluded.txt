@@ -1,5 +1,6 @@
 # Cases left out of evaluation, with the reason.
 # Decide from the issue and PR text only, never from how the agent performed.
-python-humanize__humanize-62    # tests encode inf/NaN behavior decided in PR review
-python-humanize__humanize-205   # wrong pair: closed by PR #206; PR #329 only mentions it
-pallets__click-2012             # my lean: PR covers leftovers of an earlier partial fix
+python-humanize__humanize-62     # tests encode inf/NaN behavior decided in PR review
+prettytable__prettytable-398     # issue names only min_width; the PR and its tests cover eight attributes
+pallets__click-3740              # one required test (test_prompt_required_false) is unrelated to the issue
+pallets__click-2012              # my lean: covers leftovers of an earlier partial fix; delete the line if you disagree

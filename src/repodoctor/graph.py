@@ -1,3 +1,5 @@
+import time
+from functools import wraps
 from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -9,6 +11,19 @@ from repodoctor.nodes.setup import make_setup
 from repodoctor.nodes.verify import make_verify
 from repodoctor.state import RepoDoctorState
 from repodoctor.nodes.reproduce import make_reproduce  
+
+
+def _timed(name: str, fn):
+    """Adds the node's wall-clock time to state['timings']."""
+    @wraps(fn)
+    def wrapper(state, *args, **kwargs):
+        start = time.monotonic()
+        out = fn(state, *args, **kwargs)
+        timings = dict(state.get("timings", {}))
+        timings[name] = round(timings.get(name, 0.0) + time.monotonic() - start, 1)
+        return {**out, "timings": timings}
+
+    return wrapper
 
 
 def _after(next_node: str):
@@ -30,11 +45,11 @@ def _after_verify(max_attempts: int):
 def build_graph(deps: Deps):
     """setup -> explore -> reproduce -> fix -> verify -> (fix again | end)"""
     g = StateGraph(RepoDoctorState)
-    g.add_node("setup", make_setup(deps))
-    g.add_node("explore", make_explore(deps))
-    g.add_node("reproduce", make_reproduce(deps))
-    g.add_node("fix", make_fix(deps))
-    g.add_node("verify", make_verify(deps))
+    g.add_node("setup", _timed("setup", make_setup(deps)))
+    g.add_node("explore", _timed("explore", make_explore(deps)))
+    g.add_node("reproduce", _timed("reproduce", make_reproduce(deps)))
+    g.add_node("fix", _timed("fix", make_fix(deps)))
+    g.add_node("verify", _timed("verify", make_verify(deps)))
 
     g.add_edge(START, "setup")
     g.add_conditional_edges("setup", _after("explore"), {"explore": "explore", END: END})

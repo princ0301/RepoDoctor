@@ -1,4 +1,6 @@
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 class Edit(BaseModel):
     """One exact search/replace edit to a file in the repo."""
@@ -19,13 +21,23 @@ class ExploreResult(BaseModel):
 
 
 class FixProposal(BaseModel):
-    reasoning: str = Field(description="Brief explanation of the fix")
-    edits: list[Edit] = Field(description="Exact search/replace edits")
+    reasoning: str = Field(default="", description="Brief explanation of the fix")
+    edits: list[Edit] = Field(default_factory=list, description="Exact search/replace edits")
     need_more_files: list[str] = Field(
         default_factory=list,
         description="Only if you cannot write edits without seeing other files: their paths "
         "(relative to the repo root). Leave edits empty in that case.",
     )
+
+    @field_validator("edits", "need_more_files", mode="before")
+    @classmethod
+    def _lenient_lists(cls, v, info):
+        """Accept null for either list, and 'a.py, b.py' for need_more_files."""
+        if v is None:
+            return []
+        if info.field_name == "need_more_files" and isinstance(v, str):
+            return [p.strip() for p in re.split(r"[,\n]", v) if p.strip()]
+        return v
 
 class ReproTest(BaseModel):
     reasoning: str = Field(description="What the test checks and why the bug makes it fail")

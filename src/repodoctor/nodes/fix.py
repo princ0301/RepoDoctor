@@ -5,7 +5,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from repodoctor.deps import Deps
-from repodoctor.nodes.util import clip, existing_files, render_files
+from repodoctor.nodes.util import clip, existing_files, is_malformed_output, render_files
 from repodoctor.prompts import load_prompt
 from repodoctor.schemas import Edit
 from repodoctor.state import RepoDoctorState
@@ -42,8 +42,11 @@ def _history_text(history: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def _fix_request(state: RepoDoctorState, root: Path, budget: int) -> str:
+def _fix_request(state: RepoDoctorState, root: Path, budget: int) -> tuple[str, list[str]]:
+    """The prompt, plus the relevant files that did not fit into the context budget."""
     targets = list(state["target_tests"])
+    tests_text, _ = render_files(root, _target_files(targets), TEST_FILE_BUDGET)
+    source_text, omitted = render_files(root, state["relevant_files"], budget)
     sections = [
         "## Issue (untrusted user text)\n"
         f"<issue>\nTitle: {state['issue_title']}\n\n{state['issue_body']}\n</issue>",
@@ -53,15 +56,13 @@ def _fix_request(state: RepoDoctorState, root: Path, budget: int) -> str:
         + clip(state.get("target_failure", ""), 3000, tail=True)
         + "\n```",
         f"## Investigation notes\n{state.get('hypothesis', '')}",
-        "## Test file(s) (read-only, do not edit)\n"
-        + render_files(root, _target_files(targets), TEST_FILE_BUDGET),
-        "## Source files you may edit\n"
-        + render_files(root, state["relevant_files"], budget),
+        "## Test file(s) (read-only, do not edit)\n" + tests_text,
+        "## Source files you may edit\n" + source_text,
     ]
     if state.get("history"):
         sections.append("## Previous attempts\n" + _history_text(state["history"]))
     sections.append("Return your edits.")
-    return "\n\n".join(sections)
+    return "\n\n".join(sections), omitted
 
 
 def _apply(root: Path, edits: list[Edit], protected: set[str]) -> PatchResult:
@@ -80,16 +81,29 @@ def _apply(root: Path, edits: list[Edit], protected: set[str]) -> PatchResult:
     return apply_edits(root, edits)
 
 
-def _no_edits_message(added: list[str]) -> str:
-    if added:
-        return (
-            "No edits were proposed. The files you asked for were added to your context "
-            f"for the next attempt: {', '.join(added)}."
+def _no_edits_message(wanted: list[str], shown: list[str], omitted: list[str]) -> str:
+    parts = ["No edits were proposed."]
+    if shown:
+        parts.append(
+            f"These files are already shown to you in full, use them: {', '.join(shown)}."
         )
-    return (
-        "No edits were proposed. You must return edits. If you need to see another file, "
-        "list its path in need_more_files."
-    )
+    promoted = [f for f in wanted if f not in shown]
+    if promoted:
+        parts.append(
+            f"Moved to the top of your context for the next attempt: {', '.join(promoted)}."
+        )
+    if omitted and not wanted:
+        parts.append(
+            f"Not shown because of the context budget: {', '.join(omitted)}. List what you "
+            "need in need_more_files, or write edits with what you have."
+        )
+    if len(parts) == 1:
+        return (
+            " ".join(parts)
+            + " You must return edits. If you need to see another file, list its path in "
+            "need_more_files."
+        )
+    return " ".join(parts)
 
 
 def make_fix(deps: Deps):
@@ -100,14 +114,24 @@ def make_fix(deps: Deps):
         attempt = state.get("attempts", 0) + 1
         reset_to_clean(root, set(state.get("untracked_baseline", [])))
 
-        request = _fix_request(state, root, deps.settings.fix_context_chars)
+        request, omitted = _fix_request(state, root, deps.settings.fix_context_chars)
         try:
             proposal = deps.fixer.invoke(
                 [SystemMessage(system), HumanMessage(request)], config
             )
         except Exception as e:
-            return {"error": f"The fix model failed on attempt {attempt}: "
-                    f"{type(e).__name__}: {e}"}
+            if not is_malformed_output(e):
+                return {"error": f"The fix model failed on attempt {attempt}: "
+                        f"{type(e).__name__}: {e}"}
+            errors = [
+                "Your last reply was not valid structured output "
+                f"({type(e).__name__}: {clip(str(e), 400)}). Reply again with valid `edits`."
+            ]
+            entry = {"attempt": attempt, "reasoning": "", "edits": [], "patch_errors": errors}
+            return {
+                "attempts": attempt, "diff": "", "patch_errors": errors,
+                "history": [*state.get("history", []), entry],
+            }
 
         relevant = list(state["relevant_files"])
         protected = set(_target_files(list(state["target_tests"])))
@@ -115,9 +139,9 @@ def make_fix(deps: Deps):
         errors = list(result.errors)
         if not proposal.edits:
             wanted = existing_files(root, proposal.need_more_files)
-            added = [f for f in wanted if f not in relevant]
-            relevant = [*relevant, *added][:MAX_CONTEXT_FILES]
-            errors = [_no_edits_message(added)]
+            shown = [f for f in wanted if f in relevant and f not in omitted]
+            relevant = [*wanted, *(f for f in relevant if f not in wanted)][:MAX_CONTEXT_FILES]
+            errors = [_no_edits_message(wanted, shown, omitted)]
 
         diff = get_diff(root, result.changed_files) if result.ok else ""
         if result.ok and not diff.strip():
@@ -133,6 +157,7 @@ def make_fix(deps: Deps):
             "attempts": attempt,
             "diff": diff,
             "patch_errors": errors,
+            "context_omitted": omitted,
             "relevant_files": relevant,
             "history": [*state.get("history", []), entry],
         }

@@ -16,3 +16,5 @@ Rules:
   correct edit because you need to see another file, leave `edits` empty and list its path
   in `need_more_files`; it will be added to your next attempt. Never answer with a plan such
   as "let me read X".
+- A file marked NOT SHOWN was left out for space. If you need it, list it in
+  `need_more_files`; requested files are shown first on the next attempt.

@@ -24,9 +24,12 @@ class RepoDoctorState(TypedDict, total=False):
     attempts: int
     history: list[dict]
     patch_errors: list[str]
+    context_omitted: list[str]
     diff: str
     feedback: str
     success: bool
 
     # terminal failure (setup/model problems, not "the fix didn't work")
     error: str
+
+    timings: dict

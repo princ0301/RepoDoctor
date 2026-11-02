@@ -32,6 +32,8 @@ class CaseResult:
     relevant_files: list[str] = field(default_factory=list)
     hypothesis: str = ""
     llm_calls: int = 0
+    timings: dict = field(default_factory=dict)
+    context_omitted: list[str] = field(default_factory=list)
 
 
 def _slim_history(history: list[dict]) -> list[dict]:
@@ -70,7 +72,7 @@ def classify(final: dict, grade: dict | None) -> str:
 
 def _detail(outcome: str, final: dict, grade: dict | None) -> str:
     if final.get("error"):
-        return final["error"].splitlines()[0][:200]
+        return " | ".join(final["error"].splitlines()[:3])[:300]
     if outcome == "wrong_fix" and grade:
         bad = (grade["f2p_failed"] + grade["p2p_broken"])[:3]
         return ("gold tests failing: " + ", ".join(bad)) if bad else grade.get("note", "")
@@ -121,6 +123,8 @@ def run_case(
         relevant_files=final.get("relevant_files", []),
         hypothesis=(final.get("hypothesis") or "")[:600],
         llm_calls=final.get("llm_calls", 0),
+        timings=final.get("timings", {}),
+        context_omitted=final.get("context_omitted", []),
     )
 
 
@@ -202,5 +206,13 @@ def summarize(results: list[CaseResult]) -> str:
     lines.append("Outcomes:           " + ", ".join(f"{k}={v}" for k, v in counts.most_common()))
     calls = sum(r.llm_calls for r in results)
     lines.append(f"Model calls:        {calls} total, {calls / n:.0f} per run")
+    node_time: Counter = Counter()
+    for r in results:
+        node_time.update(r.timings)
+    if node_time:
+        other = max(0.0, sum(r.seconds for r in results) - sum(node_time.values()))
+        parts = [f"{k}={v / n:.0f}s" for k, v in node_time.most_common()]
+        parts.append(f"other={other / n:.0f}s")
+        lines.append("Mean time by step:  " + ", ".join(parts))
     lines.append(f"Mean time:          {sum(r.seconds for r in results) / n:.0f}s per run")
     return "\n".join(lines)

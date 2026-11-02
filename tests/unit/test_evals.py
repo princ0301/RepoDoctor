@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from repodoctor.config import Settings
-from repodoctor.evals.build import pair_problem
+from repodoctor.evals.build import apply_pr_changes, pair_problem
 from repodoctor.evals.cases import (
     CaseSpec,
     EvalCase,
@@ -21,8 +21,8 @@ from repodoctor.evals.cases import (
 from repodoctor.evals.discover import discover
 from repodoctor.evals.grade import grade_tree
 from repodoctor.evals.run import CaseResult, classify, load_results, run_eval, summarize
-from repodoctor.tools.github import github_client
-from repodoctor.tools.repo import ProjectInfo, clone_repo, head_sha, run_git
+from repodoctor.tools.github import PRFile, github_client
+from repodoctor.tools.repo import ProjectInfo, clone_repo, fetch_pull_head, head_sha, run_git
 from repodoctor.tools.sandbox import ExecResult
 
 
@@ -62,6 +62,29 @@ def test_changed_files_from_a_diff():
         "diff --git a/src/a.py b/src/a.py\n"
     )
     assert changed_files(diff) == ["src/a.py", "tests/new.py"]
+
+
+def test_apply_pr_changes_touches_only_the_files_the_pr_changed(make_git_repo, tmp_path):
+    src = make_git_repo({"a.py": "v1\n", "c.py": "c\n", "other.py": "base\n"}, name="src")
+    run_git("checkout", "-q", "-b", "pr", cwd=src)
+    (src / "a.py").write_bytes(b"v2\n")
+    (src / "c.py").unlink()
+    (src / "t.py").write_bytes(b"t\n")
+    (src / "other.py").write_bytes(b"unrelated change merged from main\n")
+    run_git("add", "-A", cwd=src)
+    run_git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "pr", cwd=src)
+    run_git("update-ref", "refs/pull/7/head", head_sha(src), cwd=src)
+    run_git("checkout", "-q", "main", cwd=src)
+    work = clone_repo(src.as_uri(), tmp_path / "work")
+    head = fetch_pull_head(work, 7)
+
+    files = [PRFile("a.py", "modified"), PRFile("c.py", "removed"), PRFile("t.py", "added")]
+    apply_pr_changes(work, head, files)
+
+    assert (work / "a.py").read_text() == "v2\n"
+    assert not (work / "c.py").exists()
+    assert (work / "t.py").exists()
+    assert (work / "other.py").read_text() == "base\n"   # not dragged in
 
 
 def test_case_id_and_ref():
@@ -106,6 +129,12 @@ def test_summarize_reports_rates_and_precision():
     assert "1/2 (50%)" in out
     assert "precision 50%" in out
     assert "resolved=1" in out and "wrong_fix=1" in out
+
+
+def test_summarize_reports_time_by_step():
+    r = result()
+    r.timings = {"setup": 40.0, "fix": 20.0}
+    assert "setup=40s" in summarize([r])
 
 
 def test_summarize_pass_at_k_with_multiple_trials():

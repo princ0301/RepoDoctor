@@ -1,12 +1,13 @@
 """Turn a spec into a validated case, with fail-to-pass / pass-to-pass ground truth."""
 
 from collections.abc import Callable
+from pathlib import Path
 
 import httpx
 
 from repodoctor.config import Settings
 from repodoctor.evals.cases import CaseSpec, EvalCase, case_id, is_test_file, is_test_path
-from repodoctor.tools.github import fetch_issue, fetch_pr, list_pr_files
+from repodoctor.tools.github import PRFile, fetch_issue, fetch_pr, list_pr_files
 from repodoctor.tools.issue_ref import IssueRef, check_allowed
 from repodoctor.tools.repo import (
     checkout_commit,
@@ -35,6 +36,16 @@ def pair_problem(issue_closed_at: str, pr_created_at: str) -> str | None:
     return None
 
 
+def apply_pr_changes(root: Path, head: str, files: list[PRFile]) -> None:
+    """Base tree plus exactly the files the PR changed, not the rest of the PR branch."""
+    keep = [f.path for f in files if f.status != "removed"]
+    gone = [f.path for f in files if f.status == "removed"]
+    if keep:
+        run_git("checkout", head, "--", *keep, cwd=root)
+    if gone:
+        run_git("rm", "-q", "--ignore-unmatch", "--", *gone, cwd=root)
+
+
 def build_case(
     spec: CaseSpec,
     settings: Settings,
@@ -56,6 +67,8 @@ def build_case(
         raise CaseRejected(problem)
 
     files = list_pr_files(client, ref, spec.fix_pr)
+    if any(f.status == "renamed" for f in files):
+        raise CaseRejected("the PR renames files")
     test_files = [f.path for f in files if f.status != "removed" and is_test_path(f.path)]
     run_targets = [p for p in test_files if is_test_file(p)]
     src_files = [f.path for f in files if not is_test_path(f.path)]
@@ -88,9 +101,9 @@ def build_case(
         # A: code before the fix + the maintainers' tests
         run_git("checkout", head, "--", *test_files, cwd=dest)
         _, before = sb.run_outcomes(info, run_targets, settings.sandbox_timeout_s)
-        # B: the PR's own tree (fix + tests)
+        # B: the code before the fix with ONLY the PR's own changes applied
         run_git("reset", "--hard", "-q", "HEAD", cwd=dest)
-        checkout_commit(dest, head)
+        apply_pr_changes(dest, head, files)
         _, after = sb.run_outcomes(info, run_targets, settings.sandbox_timeout_s)
 
     if before is None or after is None:

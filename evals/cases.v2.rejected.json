@@ -1,0 +1,4 @@
+{
+  "python-humanize__humanize-205": "the issue was already closed when the PR was opened, so this PR did not fix it (the PR text only mentions the issue)",
+  "python-humanize__humanize-51": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
+}

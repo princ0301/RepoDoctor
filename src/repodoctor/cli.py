@@ -397,8 +397,15 @@ def eval_discover(
 def eval_build(
     specs_file: Path = typer.Option(Path("evals/specs.json"), "--specs"),
     out: Path = typer.Option(Path("evals/cases.json"), "--out"),
+    compare: Path = typer.Option(
+        Path("evals/cases.json"), "--compare",
+        help="Earlier cases file: changed ground truth is reported against it",
+    ),
     retry_rejected: bool = typer.Option(
         False, "--retry-rejected", help="Try again the specs rejected in earlier builds"
+    ),
+    dev: bool = typer.Option(
+        False, "--dev", help="Add cases that are new (not in --compare) to evals/dev_ids.txt"
     ),
 ) -> None:
     """Validate specs and compute ground truth (which tests the fix must turn green)."""
@@ -406,6 +413,7 @@ def eval_build(
         typer.echo(f"ERROR   {specs_file} does not exist")
         raise typer.Exit(1)
     settings = get_settings()
+    known = {c.id: c for c in load_cases(compare)} if compare.exists() else {}
     cases = load_cases(out) if out.exists() else []
     done = {c.id for c in cases}
     rejected_file = out.with_suffix(".rejected.json")
@@ -438,10 +446,23 @@ def eval_build(
                 f"  OK        {len(case.fail_to_pass)} fail-to-pass, "
                 f"{len(case.pass_to_pass)} pass-to-pass tests"
             )
+            old = known.get(case.id)
+            if old is None and dev:
+                text = DEV_FILE.read_text(encoding="utf-8") if DEV_FILE.exists() else ""
+                sep = "" if (not text or text.endswith("\n")) else "\n"
+                DEV_FILE.write_text(text + sep + case.id + "\n", encoding="utf-8")
+                typer.echo("            added to the dev set")
+            elif old is not None and old.fail_to_pass != case.fail_to_pass:
+                lost = sorted(set(old.fail_to_pass) - set(case.fail_to_pass))
+                typer.echo(
+                    f"  CHANGED   fail-to-pass {len(old.fail_to_pass)} -> "
+                    f"{len(case.fail_to_pass)}; no longer required, e.g. {lost[:2]}"
+                )
     typer.echo(f"{len(cases)} case(s) in {out}")
 
 
 EXCLUDED_FILE = Path("evals/excluded.txt")
+DEV_FILE = Path("evals/dev_ids.txt")
 
 
 def _excluded_ids(path: Path = EXCLUDED_FILE) -> set[str]:
@@ -622,6 +643,9 @@ def eval_report(
         typer.echo(f"Maintainers' fix: {r.gold_pr}\n")
         typer.echo(f"Explorer chose: {', '.join(r.relevant_files) or '-'}")
         typer.echo(f"Hypothesis: {r.hypothesis or '-'}\n")
+        typer.echo(f"Time by step: {r.timings or '-'}")
+        if r.context_omitted:
+            typer.echo(f"Not shown to the fixer (budget): {', '.join(r.context_omitted)}")
         for h in r.history:
             typer.echo(f"--- attempt {h['attempt']} ---")
             typer.echo(f"reasoning: {h['reasoning']}")

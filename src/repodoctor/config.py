@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     max_attempts: int = 3          # fix/verify retries
     explore_max_steps: int = 10    # tool-call rounds in the explorer
     repro_max_attempts: int = 3    # tries to write a valid reproduction test
-    fix_context_chars: int = 80_000
+    fix_context_chars: int = 240_000
 
     # --- Sandbox ---
     sandbox_timeout_s: int = 300

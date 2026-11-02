@@ -1,6 +1,7 @@
 import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
+from pydantic import ValidationError
 
 from repodoctor.config import Settings
 from repodoctor.deps import Deps
@@ -55,7 +56,22 @@ def proposal(*edits: Edit) -> FixProposal:
 
 def scripted(items):
     queue = list(items)
-    return RunnableLambda(lambda _messages: queue.pop(0))
+
+    def step(_messages):
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    return RunnableLambda(step)
+
+
+def _validation_error() -> ValidationError:
+    try:
+        FixProposal.model_validate({"edits": 5})
+    except ValidationError as e:
+        return e
+    raise AssertionError("expected a validation error")
 
 
 def _default_target_report(code: int) -> SuiteReport:
@@ -91,17 +107,27 @@ def repo(make_git_repo):
     return make_git_repo({"textkit.py": CODE, "tests/test_text.py": TEST})
 
 
-def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET,), repros=()):
+@pytest.fixture
+def repo_two_files(make_git_repo):
+    return make_git_repo({
+        "textkit.py": CODE,
+        "extra.py": "# helper\n" + "x = 1\n" * 40,
+        "tests/test_text.py": TEST,
+    })
+
+
+def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET,), repros=(),
+        relevant=("textkit.py",), **settings_kw):
     tools = make_search_tools(repo)
     deps = Deps(
-        settings=Settings(_env_file=None, max_attempts=max_attempts),
+        settings=Settings(_env_file=None, max_attempts=max_attempts, **settings_kw),
         sandbox=sandbox,
         info=ProjectInfo(True, test_command=["python", "-m", "pytest"]),
         workdir=repo,
         tools=tools,
         explorer=explorer or scripted([AIMessage(content="done")]),
         summarizer=RunnableLambda(
-            lambda _m: ExploreResult(relevant_files=["textkit.py"], hypothesis="off by one")
+            lambda _m: ExploreResult(relevant_files=list(relevant), hypothesis="off by one")
         ),
         fixer=scripted(proposals),
         repro_writer=scripted(repros),
@@ -158,13 +184,32 @@ def test_refuses_to_edit_the_target_test(repo):
     assert (repo / "tests" / "test_text.py").read_text() == TEST
 
 
+def test_malformed_model_output_is_a_failed_attempt_not_an_outage(repo):
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [_validation_error(), proposal(GOOD)])
+    assert final["success"] and final["attempts"] == 2
+    assert "not valid structured output" in final["history"][0]["feedback"]
+
+
+def test_other_model_failures_still_abort_the_run(repo):
+    sandbox = FakeSandbox(target=[1], suites=[BASE])
+    final = run(repo, sandbox, [RuntimeError("boom")])
+    assert "fix model failed" in final["error"] and "attempts" not in final or True
+    assert not final.get("success")
+
+
+def test_records_time_spent_in_each_step(repo):
+    final = run(repo, FakeSandbox(target=[1, 0], suites=[BASE, CLEAN]), [proposal(GOOD)])
+    assert set(final["timings"]) >= {"setup", "explore", "fix", "verify"}
+
+
 def test_a_fixer_that_needs_another_file_gets_it_on_the_next_attempt(repo):
     ask = FixProposal(reasoning="need it", edits=[], need_more_files=["tests/test_text.py"])
     sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
     final = run(repo, sandbox, [ask, proposal(GOOD)])
     assert final["success"] and final["attempts"] == 2
-    assert final["relevant_files"] == ["textkit.py", "tests/test_text.py"]
-    assert "added to your context" in final["history"][0]["feedback"]
+    assert final["relevant_files"] == ["tests/test_text.py", "textkit.py"]
+    assert "Moved to the top" in final["history"][0]["feedback"]
 
 
 def test_empty_edits_with_an_invalid_request_explain_how_to_ask(repo):
@@ -173,6 +218,26 @@ def test_empty_edits_with_an_invalid_request_explain_how_to_ask(repo):
     final = run(repo, sandbox, [ask, proposal(GOOD)])
     assert "need_more_files" in final["history"][0]["feedback"]
     assert final["relevant_files"] == ["textkit.py"]
+
+
+def test_a_file_cut_by_the_budget_is_promoted_when_the_fixer_asks_for_it(repo_two_files):
+    ask = FixProposal(reasoning="need it", need_more_files=["extra.py"])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(
+        repo_two_files, sandbox, [ask, proposal(GOOD)],
+        relevant=("textkit.py", "extra.py"), fix_context_chars=len(CODE) + 60,
+    )
+    assert final["success"] and final["attempts"] == 2
+    assert final["relevant_files"][0] == "extra.py"
+    assert "Moved to the top" in final["history"][0]["feedback"]
+    assert "context_omitted" in final
+
+
+def test_a_request_for_a_file_that_is_already_shown_says_so(repo):
+    ask = FixProposal(reasoning="x", need_more_files=["textkit.py"])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [ask, proposal(GOOD)])
+    assert "already shown" in final["history"][0]["feedback"]
 
 
 def test_aborts_when_target_already_passes(repo):

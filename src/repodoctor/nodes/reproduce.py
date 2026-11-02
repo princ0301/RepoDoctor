@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from repodoctor.deps import Deps
-from repodoctor.nodes.util import clip, render_files
+from repodoctor.nodes.util import clip, is_malformed_output, render_files
 from repodoctor.prompts import load_prompt
 from repodoctor.schemas import ReproTest
 from repodoctor.state import RepoDoctorState
@@ -94,7 +94,7 @@ def _repro_request(
         f"<issue>\nTitle: {state['issue_title']}\n\n{state['issue_body']}\n</issue>",
         f"## Investigation notes\n{state.get('hypothesis', '')}",
         "## Relevant source files\n"
-        + render_files(root, state.get("relevant_files", []), SOURCE_BUDGET),
+        + render_files(root, state.get("relevant_files", []), SOURCE_BUDGET)[0],
     ]
     if style[1]:
         parts.append(
@@ -129,7 +129,14 @@ def make_reproduce(deps: Deps):
                     [SystemMessage(system), HumanMessage(request)], config
                 )
             except Exception as e:
-                return {"error": f"The reproduce model failed: {type(e).__name__}: {e}"}
+                if not is_malformed_output(e):
+                    return {"error": f"The reproduce model failed: {type(e).__name__}: {e}"}
+                last_problem = f"unparseable model output ({type(e).__name__})"
+                rejections.append(
+                    f"Attempt {attempt} was rejected: your reply could not be parsed "
+                    f"({clip(str(e), 300)}). Reply again with a complete test file."
+                )
+                continue
 
             problem = static_problem(test)
             node_id = f"{rel}::{test.test_name}"
