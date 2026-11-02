@@ -18,6 +18,7 @@ class RepoDoctorState(TypedDict, total=False):
 
     # explore
     relevant_files: list[str]
+    explored_files: list[str]
     hypothesis: str
 
     # fix/verify loop

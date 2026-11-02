@@ -158,5 +158,160 @@
     "repo": "prettytable/prettytable",
     "issue": 259,
     "fix_pr": 369
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 3071,
+    "fix_pr": 3079
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2447,
+    "fix_pr": 3058
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2995,
+    "fix_pr": 3013
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2939,
+    "fix_pr": 2940
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2906,
+    "fix_pr": 2935
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2787,
+    "fix_pr": 2934
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2832,
+    "fix_pr": 2840
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2817,
+    "fix_pr": 2818
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2813,
+    "fix_pr": 2816
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2644,
+    "fix_pr": 2800
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2746,
+    "fix_pr": 2788
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2674,
+    "fix_pr": 2775
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 663,
+    "fix_pr": 664
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 566,
+    "fix_pr": 567
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 438,
+    "fix_pr": 513
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 322,
+    "fix_pr": 323
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 190,
+    "fix_pr": 279
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 197,
+    "fix_pr": 252
+  },
+  {
+    "repo": "andialbrecht/sqlparse",
+    "issue": 176,
+    "fix_pr": 177
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 232,
+    "fix_pr": 370
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 297,
+    "fix_pr": 368
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 165,
+    "fix_pr": 358
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 354,
+    "fix_pr": 355
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 199,
+    "fix_pr": 345
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 272,
+    "fix_pr": 343
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 288,
+    "fix_pr": 289
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 54,
+    "fix_pr": 359
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 237,
+    "fix_pr": 356
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 310,
+    "fix_pr": 312
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 253,
+    "fix_pr": 307
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 40,
+    "fix_pr": 305
   }
 ]

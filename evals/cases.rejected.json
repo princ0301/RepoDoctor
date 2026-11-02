@@ -1,3 +1,12 @@
 {
-  "python-humanize__humanize-51": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
+  "python-humanize__humanize-51": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "python-humanize__humanize-205": "the issue was already closed when the PR was opened, so this PR did not fix it (the PR text only mentions the issue)",
+  "pallets__click-2787": "the maintainers' tests produced no report",
+  "pallets__click-2674": "the maintainers' tests produced no report",
+  "andialbrecht__sqlparse-438": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "andialbrecht__sqlparse-190": "the maintainers' tests produced no report",
+  "andialbrecht__sqlparse-197": "the issue number is a pull request",
+  "andialbrecht__sqlparse-176": "dependency install failed at the base commit",
+  "prettytable__prettytable-297": "the maintainers' tests produced no report",
+  "prettytable__prettytable-310": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
 }

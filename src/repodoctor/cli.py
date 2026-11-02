@@ -641,7 +641,9 @@ def eval_report(
         if r.detail:
             typer.echo(r.detail)
         typer.echo(f"Maintainers' fix: {r.gold_pr}\n")
-        typer.echo(f"Explorer chose: {', '.join(r.relevant_files) or '-'}")
+        typer.echo(f"Explorer chose: {', '.join(r.explored_files or r.relevant_files) or '-'}")
+        if r.explored_files and r.relevant_files != r.explored_files:
+            typer.echo(f"Fixer's context at the end: {', '.join(r.relevant_files)}")
         typer.echo(f"Hypothesis: {r.hypothesis or '-'}\n")
         typer.echo(f"Time by step: {r.timings or '-'}")
         if r.context_omitted:

@@ -74,6 +74,10 @@ def make_explore(deps: Deps):
         files = existing_files(deps.workdir, result.relevant_files)
         if not files:
             return {"error": "The explorer did not identify any existing source file."}
-        return {"relevant_files": files, "hypothesis": result.hypothesis}
+        return {
+            "relevant_files": files,
+            "explored_files": files,
+            "hypothesis": result.hypothesis,
+        }
 
     return explore

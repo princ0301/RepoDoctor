@@ -209,6 +209,7 @@ def test_a_fixer_that_needs_another_file_gets_it_on_the_next_attempt(repo):
     final = run(repo, sandbox, [ask, proposal(GOOD)])
     assert final["success"] and final["attempts"] == 2
     assert final["relevant_files"] == ["tests/test_text.py", "textkit.py"]
+    assert final["explored_files"] == ["textkit.py"]
     assert "Moved to the top" in final["history"][0]["feedback"]
 
 

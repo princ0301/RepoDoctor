@@ -34,6 +34,7 @@ class CaseResult:
     llm_calls: int = 0
     timings: dict = field(default_factory=dict)
     context_omitted: list[str] = field(default_factory=list)
+    explored_files: list[str] = field(default_factory=list)
 
 
 def _slim_history(history: list[dict]) -> list[dict]:
@@ -125,6 +126,7 @@ def run_case(
         llm_calls=final.get("llm_calls", 0),
         timings=final.get("timings", {}),
         context_omitted=final.get("context_omitted", []),
+        explored_files=final.get("explored_files", []),
     )
 
 
