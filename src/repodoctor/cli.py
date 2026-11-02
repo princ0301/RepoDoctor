@@ -530,7 +530,13 @@ def eval_report(
         if r.detail:
             typer.echo(r.detail)
         typer.echo(f"Maintainers' fix: {r.gold_pr}\n")
-        typer.echo(r.diff or "(no diff)")
+        for h in r.history:
+            typer.echo(f"--- attempt {h['attempt']} ---")
+            typer.echo(f"reasoning: {h['reasoning']}")
+            for e in h["edits"]:
+                typer.echo(f"edit {e['path']}:\n  old: {e['old']!r}\n  new: {e['new']!r}")
+            typer.echo(f"feedback: {h['feedback']}")
+        typer.echo("\n" + (r.diff or "(no diff)"))
 
 if __name__ == "__main__":
     app()

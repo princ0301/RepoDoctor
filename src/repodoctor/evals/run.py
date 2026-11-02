@@ -28,6 +28,24 @@ class CaseResult:
     detail: str = ""
     diff: str = ""
     gold_pr: str = ""
+    history: list[dict] = field(default_factory=list)
+
+
+def _slim_history(history: list[dict]) -> list[dict]:
+    """Per-attempt record, trimmed so results.jsonl stays readable."""
+    return [
+        {
+            "attempt": h.get("attempt"),
+            "reasoning": (h.get("reasoning") or "")[:500],
+            "edits": [
+                {"path": e["path"], "old": e["old"][:300], "new": e["new"][:300]}
+                for e in h.get("edits", [])
+            ],
+            "patch_errors": [err[:400] for err in h.get("patch_errors", [])],
+            "feedback": (h.get("feedback") or "")[:800],
+        }
+        for h in history
+    ]
 
 
 def classify(final: dict, grade: dict | None) -> str:
@@ -96,6 +114,7 @@ def run_case(
         detail=_detail(outcome, final, grade),
         diff=final.get("full_diff") or final.get("diff") or "",
         gold_pr=f"https://github.com/{case.repo}/pull/{case.fix_pr}",
+        history=_slim_history(final.get("history", [])),
     )
 
 
