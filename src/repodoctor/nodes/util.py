@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from repodoctor.tools.paths import safe_resolve
 from repodoctor.tools.search import SearchError, read_raw
 
 
@@ -10,6 +11,21 @@ def clip(text: str, limit: int, *, tail: bool = False) -> str:
     if tail:
         return f"[... truncated ...]\n{text[-limit:]}"
     return f"{text[:limit]}\n[... truncated ...]"
+
+
+def existing_files(root: Path, paths: list[str], limit: int = 5) -> list[str]:
+    """Paths that exist inside the repo, normalized and de-duplicated."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in paths:
+        p = safe_resolve(root, raw.strip())
+        if p is None or not p.is_file():
+            continue
+        rel = p.relative_to(root.resolve()).as_posix()
+        if rel not in seen:
+            seen.add(rel)
+            out.append(rel)
+    return out[:limit]
 
 
 def render_files(root: Path, paths: list[str], budget: int) -> str:

@@ -33,6 +33,7 @@ class IssueData:
     assignees: list[str]
     comments: list[str]        # "user: text"
     is_pull_request: bool
+    closed_at: str = ""
 
 
 @dataclass
@@ -43,6 +44,7 @@ class FixingPR:
     base_sha: str              # the commit the PR was opened against
     merge_sha: str | None
     head_sha: str = ""
+    created_at: str = ""
 
 
 def github_client(
@@ -90,7 +92,13 @@ def fetch_issue(client: httpx.Client, ref: IssueRef) -> IssueData:
             for c in comments[:MAX_COMMENTS]
         ],
         is_pull_request="pull_request" in d,
+        closed_at=d.get("closed_at") or "",
     )
+
+
+def fetch_pr_text(client: httpx.Client, ref: IssueRef, number: int) -> tuple[str, str]:
+    pr = _get(client, f"/repos/{ref.full_name}/pulls/{number}")
+    return pr.get("title", ""), pr.get("body") or ""
 
 
 def _head(text: str, limit: int) -> str:
@@ -120,6 +128,7 @@ def _to_fixing_pr(pr: dict) -> FixingPR:
         base_sha=pr["base"]["sha"],
         merge_sha=pr.get("merge_commit_sha"),
         head_sha=(pr.get("head") or {}).get("sha", ""),
+        created_at=pr.get("created_at") or "",
     )
 
 

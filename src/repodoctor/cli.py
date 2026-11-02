@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 from repodoctor.config import Settings, get_settings
 from repodoctor.demo import make_demo
-from repodoctor.evals.build import CaseRejected, build_case
+from repodoctor.evals.build import CaseRejected, build_case, pair_problem
 from repodoctor.evals.cases import (
     CaseSpec,
     case_id,
@@ -29,7 +29,13 @@ from repodoctor.runner import (
     run_fix,
     run_fix_issue,
 )
-from repodoctor.tools.github import GitHubError, github_client
+from repodoctor.tools.github import (
+    GitHubError,
+    fetch_issue,
+    fetch_pr,
+    fetch_pr_text,
+    github_client,
+)
 from repodoctor.tools.issue_ref import (
     InvalidIssueUrl,
     IssueRef,
@@ -435,6 +441,72 @@ def eval_build(
     typer.echo(f"{len(cases)} case(s) in {out}")
 
 
+EXCLUDED_FILE = Path("evals/excluded.txt")
+
+
+def _excluded_ids(path: Path = EXCLUDED_FILE) -> set[str]:
+    if not path.exists():
+        return set()
+    return {
+        line.split()[0]
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
+@app.command("eval-inspect")
+def eval_inspect(
+    case_ids: list[str],
+    cases_file: Path = typer.Option(Path("evals/cases.json"), "--cases"),
+) -> None:
+    """Show what a case asks for (issue, PR text, tests) to judge whether it is fair."""
+    cases = {c.id: c for c in load_cases(cases_file)}
+    with github_client(get_settings().github_token) as client:
+        for cid in case_ids:
+            case = cases.get(cid)
+            if case is None:
+                typer.echo(f"ERROR   unknown case {cid}")
+                continue
+            try:
+                issue = fetch_issue(client, case.ref)
+                pr_title, pr_body = fetch_pr_text(client, case.ref, case.fix_pr)
+            except GitHubError as e:
+                typer.echo(f"ERROR   {cid}: {e}")
+                continue
+            typer.echo("=" * 78)
+            typer.echo(f"{cid}   issue #{case.issue}   fixed by PR #{case.fix_pr}")
+            typer.echo(f"\nISSUE: {issue.title}\n{issue.body.strip()[:1500]}")
+            typer.echo(f"\nPR: {pr_title}\n{pr_body.strip()[:1000]}")
+            typer.echo(f"\nMaintainers changed: {', '.join(case.src_files)}")
+            typer.echo(f"Fail-to-pass tests ({len(case.fail_to_pass)}):")
+            for t in case.fail_to_pass[:12]:
+                typer.echo(f"  {t}")
+            if len(case.fail_to_pass) > 12:
+                typer.echo(f"  ... and {len(case.fail_to_pass) - 12} more")
+
+
+@app.command("eval-recheck")
+def eval_recheck(
+    cases_file: Path = typer.Option(Path("evals/cases.json"), "--cases"),
+) -> None:
+    """Re-check the issue/PR pairing of built cases (GitHub API only, no sandbox)."""
+    cases = load_cases(cases_file)
+    flagged = 0
+    with github_client(get_settings().github_token) as client:
+        for c in cases:
+            try:
+                issue = fetch_issue(client, c.ref)
+                pr = fetch_pr(client, c.ref, c.fix_pr)
+            except GitHubError as e:
+                typer.echo(f"ERROR     {c.id}: {e}")
+                continue
+            problem = pair_problem(issue.closed_at, pr.created_at)
+            if problem:
+                flagged += 1
+                typer.echo(f"SUSPECT   {c.id}: {problem}")
+    typer.echo(f"{flagged} suspect pair(s) among {len(cases)} case(s)")
+
+
 def _dev_ids(path: Path = Path("evals/dev_ids.txt")) -> set[str]:
     if not path.exists():
         typer.echo(f"ERROR   {path} does not exist")
@@ -449,6 +521,9 @@ def _dev_ids(path: Path = Path("evals/dev_ids.txt")) -> set[str]:
 @app.command("eval-run")
 def eval_run(
     cases_file: Path = typer.Option(Path("evals/cases.json"), "--cases"),
+    include_excluded: bool = typer.Option(
+        False, "--include-excluded", help="Also run cases listed in evals/excluded.txt"
+    ),
     trials: int = typer.Option(1, help="Runs per case (use 3+ for stable numbers)"),
     limit: int = typer.Option(0, help="Only the first N cases after filtering (0 = all)"),
     per_repo: int = typer.Option(0, "--per-repo", help="At most N cases from each repo"),
@@ -457,6 +532,9 @@ def eval_run(
     ),
     only: list[str] | None = typer.Option(None, "--only", help="Case id(s) to run"),
     label: str = typer.Option("run", help="Names this run in results and LangSmith"),
+    resume: Path | None = typer.Option(
+        None, "--resume", help="results.jsonl of an interrupted run: continue it"
+    ),
 ) -> None:
     """Run the agent on every case and grade it with the maintainers' tests."""
     if not cases_file.exists():
@@ -468,6 +546,9 @@ def eval_run(
 
     settings = get_settings()
     cases = load_cases(cases_file)
+    if not include_excluded:
+        skip = _excluded_ids()
+        cases = [c for c in cases if c.id not in skip]
     if only:
         cases = [c for c in cases if c.id in only]
     if split:
@@ -493,24 +574,33 @@ def eval_run(
         typer.echo("ERROR   no cases selected")
         raise typer.Exit(1)
 
-    out_dir = Path(".repodoctor/evals") / f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{label}"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "meta.json").write_text(
-        json.dumps({
-            "label": label, "trials": trials, "split": split, "cases": [c.id for c in cases],
-            "llm_explore": settings.llm_explore, "llm_fix": settings.llm_fix,
-            "llm_fallbacks": settings.fallback_specs,
-            "max_attempts": settings.max_attempts,
-            "repro_max_attempts": settings.repro_max_attempts,
-        }, indent=2),
-        encoding="utf-8",
+    if resume:
+        results_file = resume
+        done = {
+            (r.case_id, r.trial) for r in load_results(resume) if r.outcome != "model_error"
+        }
+    else:
+        out_dir = Path(".repodoctor/evals") / f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{label}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "meta.json").write_text(
+            json.dumps({
+                "label": label, "trials": trials, "split": split,
+                "cases": [c.id for c in cases],
+                "llm_explore": settings.llm_explore, "llm_fix": settings.llm_fix,
+                "llm_fallbacks": settings.fallback_specs,
+                "max_attempts": settings.max_attempts,
+                "repro_max_attempts": settings.repro_max_attempts,
+            }, indent=2),
+            encoding="utf-8",
+        )
+        results_file = out_dir / "results.jsonl"
+        done = set()
+    typer.echo(f"{len(cases)} case(s) x {trials} trial(s). Results: {results_file}\n")
+    run_eval(
+        cases, settings, trials=trials, label=label, results_file=results_file,
+        done=done, log=typer.echo,
     )
-    typer.echo(f"{len(cases)} case(s) x {trials} trial(s). Results: {out_dir / 'results.jsonl'}\n")
-    results = run_eval(
-        cases, settings, trials=trials, label=label,
-        results_file=out_dir / "results.jsonl", log=typer.echo,
-    )
-    typer.echo("\n" + summarize(results))
+    typer.echo("\n" + summarize(load_results(results_file)))
 
 
 @app.command("eval-report")
@@ -530,6 +620,8 @@ def eval_report(
         if r.detail:
             typer.echo(r.detail)
         typer.echo(f"Maintainers' fix: {r.gold_pr}\n")
+        typer.echo(f"Explorer chose: {', '.join(r.relevant_files) or '-'}")
+        typer.echo(f"Hypothesis: {r.hypothesis or '-'}\n")
         for h in r.history:
             typer.echo(f"--- attempt {h['attempt']} ---")
             typer.echo(f"reasoning: {h['reasoning']}")

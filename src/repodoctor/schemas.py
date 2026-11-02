@@ -21,6 +21,11 @@ class ExploreResult(BaseModel):
 class FixProposal(BaseModel):
     reasoning: str = Field(description="Brief explanation of the fix")
     edits: list[Edit] = Field(description="Exact search/replace edits")
+    need_more_files: list[str] = Field(
+        default_factory=list,
+        description="Only if you cannot write edits without seeing other files: their paths "
+        "(relative to the repo root). Leave edits empty in that case.",
+    )
 
 class ReproTest(BaseModel):
     reasoning: str = Field(description="What the test checks and why the bug makes it fail")

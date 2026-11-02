@@ -2,7 +2,7 @@
 
 **An autonomous agent that reads a GitHub issue, writes a failing test that reproduces it, fixes the code inside a locked-down Docker sandbox, and proves the fix against the project's own test suite.**
 
-Built with [LangGraph](https://langchain-ai.github.io/langgraph/) and [LangChain](https://python.langchain.com/), traced with [LangSmith](https://smith.langchain.com/), and run on free NVIDIA Nemotron models.
+Built with [LangGraph](https://langchain-ai.github.io/langgraph/) and [LangChain](https://python.langchain.com/), traced with [LangSmith](https://smith.langchain.com/), and run on NVIDIA Nemotron models.
 
 > **Status: early-stage research project.** The fix loop and the evaluation harness work end to end. The agent does **not** open pull requests yet, and nothing it produces is ever pushed anywhere. See [Status and roadmap](#status-and-roadmap).
 
@@ -461,7 +461,7 @@ uv run ruff check . --fix
 | **Supported** | Python repositories tested with pytest |
 | **Next** | Diagnose failures from the dev baseline; run the held-out baseline; improve the weakest stage; then the approval step and a dry-run-first PR flow |
 
-Known limitations:
+<!-- Known limitations:
 - Only Python and pytest.
 - Free-tier model quotas limit how many evaluation runs are practical.
 - No retrieval or embeddings: the agent uses text search and file reading. They will be added only if the evaluation shows retrieval is the bottleneck.
@@ -471,4 +471,4 @@ Known limitations:
 
 ## License
 
-No license has been chosen yet. Add a `LICENSE` file before publishing or accepting contributions.
+No license has been chosen yet. Add a `LICENSE` file before publishing or accepting contributions. -->

@@ -5,13 +5,11 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
 from repodoctor.deps import Deps
-from repodoctor.nodes.util import clip
+from repodoctor.nodes.util import clip, existing_files
 from repodoctor.prompts import load_prompt
 from repodoctor.state import RepoDoctorState
-from repodoctor.tools.paths import safe_resolve
 
 TOOL_RESULT_LIMIT = 20_000
-MAX_FILES = 5
 
 SUMMARY_REQUEST = (
     "Now report your findings.\n"
@@ -48,20 +46,6 @@ def _run_tool(tools: dict[str, BaseTool], call: dict) -> str:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
-def _existing_files(root: Path, paths: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for raw in paths:
-        p = safe_resolve(root, raw.strip())
-        if p is None or not p.is_file():
-            continue
-        rel = p.relative_to(root.resolve()).as_posix()
-        if rel not in seen:
-            seen.add(rel)
-            out.append(rel)
-    return out[:MAX_FILES]
-
-
 def make_explore(deps: Deps):
     system = load_prompt("explore")
     tools = {t.name: t for t in deps.tools}
@@ -87,7 +71,7 @@ def make_explore(deps: Deps):
         except Exception as e:  # rate limits, auth, malformed output after fallbacks
             return {"error": f"The explore model failed: {type(e).__name__}: {e}"}
 
-        files = _existing_files(deps.workdir, result.relevant_files)
+        files = existing_files(deps.workdir, result.relevant_files)
         if not files:
             return {"error": "The explorer did not identify any existing source file."}
         return {"relevant_files": files, "hypothesis": result.hypothesis}

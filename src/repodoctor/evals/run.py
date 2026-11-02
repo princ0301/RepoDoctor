@@ -29,6 +29,9 @@ class CaseResult:
     diff: str = ""
     gold_pr: str = ""
     history: list[dict] = field(default_factory=list)
+    relevant_files: list[str] = field(default_factory=list)
+    hypothesis: str = ""
+    llm_calls: int = 0
 
 
 def _slim_history(history: list[dict]) -> list[dict]:
@@ -115,6 +118,9 @@ def run_case(
         diff=final.get("full_diff") or final.get("diff") or "",
         gold_pr=f"https://github.com/{case.repo}/pull/{case.fix_pr}",
         history=_slim_history(final.get("history", [])),
+        relevant_files=final.get("relevant_files", []),
+        hypothesis=(final.get("hypothesis") or "")[:600],
+        llm_calls=final.get("llm_calls", 0),
     )
 
 
@@ -125,24 +131,45 @@ def run_eval(
     trials: int,
     label: str,
     results_file: Path,
+    done: set[tuple[str, int]] | None = None,
+    stop_after_model_errors: int = 2,
     log: Callable[[str], None] = lambda _m: None,
 ) -> list[CaseResult]:
+    """Run every (case, trial) not in `done`. Stops early if the models keep failing."""
+    done = done or set()
     results: list[CaseResult] = []
     results_file.parent.mkdir(parents=True, exist_ok=True)
+    consecutive_model_errors = 0
     for case in cases:
         for trial in range(1, trials + 1):
+            if (case.id, trial) in done:
+                continue
             log(f"Running {case.id} (trial {trial}/{trials}) ...")
             r = run_case(case, trial, settings, label=label)
             results.append(r)
             with results_file.open("a", encoding="utf-8") as f:   # crash-safe
                 f.write(json.dumps(asdict(r)) + "\n")
-            log(f"  -> {r.outcome} in {r.seconds:.0f}s {r.detail}".rstrip())
+            log(f"  -> {r.outcome} in {r.seconds:.0f}s, {r.llm_calls} calls {r.detail}".rstrip())
+            consecutive_model_errors = (
+                consecutive_model_errors + 1 if r.outcome == "model_error" else 0
+            )
+            if consecutive_model_errors >= stop_after_model_errors:
+                log(
+                    "Stopping: the models keep failing (quota or rate limit?). "
+                    "Resume later with --resume " + str(results_file)
+                )
+                return results
     return results
 
 
 def load_results(path: Path) -> list[CaseResult]:
-    lines = path.read_text(encoding="utf-8").splitlines()
-    return [CaseResult(**json.loads(line)) for line in lines if line.strip()]
+    """The latest record for each (case, trial), so resumed runs replace earlier errors."""
+    latest: dict[tuple[str, int], CaseResult] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            r = CaseResult(**json.loads(line))
+            latest[(r.case_id, r.trial)] = r
+    return list(latest.values())
 
 
 def summarize(results: list[CaseResult]) -> str:
@@ -173,5 +200,7 @@ def summarize(results: list[CaseResult]) -> str:
         lines.append(f"Solved in at least one trial: {once}/{len(case_ids)} cases")
     counts = Counter(r.outcome for r in results)
     lines.append("Outcomes:           " + ", ".join(f"{k}={v}" for k, v in counts.most_common()))
+    calls = sum(r.llm_calls for r in results)
+    lines.append(f"Model calls:        {calls} total, {calls / n:.0f} per run")
     lines.append(f"Mean time:          {sum(r.seconds for r in results) / n:.0f}s per run")
     return "\n".join(lines)

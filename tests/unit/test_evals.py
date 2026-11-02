@@ -1,7 +1,11 @@
+import json
+from dataclasses import asdict
+
 import httpx
 import pytest
 
 from repodoctor.config import Settings
+from repodoctor.evals.build import pair_problem
 from repodoctor.evals.cases import (
     CaseSpec,
     EvalCase,
@@ -16,7 +20,7 @@ from repodoctor.evals.cases import (
 )
 from repodoctor.evals.discover import discover
 from repodoctor.evals.grade import grade_tree
-from repodoctor.evals.run import CaseResult, classify, summarize
+from repodoctor.evals.run import CaseResult, classify, load_results, run_eval, summarize
 from repodoctor.tools.github import github_client
 from repodoctor.tools.repo import ProjectInfo, clone_repo, head_sha, run_git
 from repodoctor.tools.sandbox import ExecResult
@@ -111,6 +115,48 @@ def test_summarize_pass_at_k_with_multiple_trials():
 
 def test_summarize_empty():
     assert summarize([]) == "No results."
+
+
+def test_pair_problem():
+    assert pair_problem("2026-07-02T00:00:00Z", "2026-07-01T00:00:00Z") is None
+    assert "already closed" in pair_problem("2024-01-01T00:00:00Z", "2026-07-01T00:00:00Z")
+    assert pair_problem("", "2026-07-01T00:00:00Z") is None
+
+
+def test_run_eval_stops_after_consecutive_model_errors(tmp_path, monkeypatch):
+    ran = []
+
+    def fake(c, trial, settings, *, label):
+        ran.append(c.id)
+        return result(c.id, trial, "model_error", success=False)
+
+    monkeypatch.setattr("repodoctor.evals.run.run_case", fake)
+    cases = [case(id=f"c{i}") for i in range(5)]
+    run_eval(cases, Settings(_env_file=None), trials=1, label="t",
+             results_file=tmp_path / "r.jsonl")
+    assert ran == ["c0", "c1"]
+
+
+def test_run_eval_skips_finished_runs(tmp_path, monkeypatch):
+    ran = []
+
+    def fake(c, trial, settings, *, label):
+        ran.append((c.id, trial))
+        return result(c.id, trial)
+
+    monkeypatch.setattr("repodoctor.evals.run.run_case", fake)
+    run_eval([case(id="a"), case(id="b")], Settings(_env_file=None), trials=1, label="t",
+             results_file=tmp_path / "r.jsonl", done={("a", 1)})
+    assert ran == [("b", 1)]
+
+
+def test_load_results_keeps_the_latest_record_per_run(tmp_path):
+    path = tmp_path / "r.jsonl"
+    for outcome in ("model_error", "resolved"):
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(asdict(result("a", 1, outcome))) + "\n")
+    (only,) = load_results(path)
+    assert only.outcome == "resolved"
 
 
 # ---------- discovery (mocked GitHub) ----------

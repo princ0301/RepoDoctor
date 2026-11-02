@@ -29,7 +29,7 @@ from repodoctor.tools.repo import (
     remove_dir,
 )
 from repodoctor.tools.sandbox import Sandbox, ensure_image
-from repodoctor.tracing import run_config
+from repodoctor.tracing import CallCounter, run_config
 
 
 PostHook = Callable[[Sandbox, ProjectInfo, Path, dict], dict | None]
@@ -114,11 +114,14 @@ def execute(
                 **metadata,
             },
         )
+        counter = CallCounter()
+        config["callbacks"] = [counter]
         initial: dict = {"issue_title": title, "issue_body": body}
         if targets:
             initial["target_tests"] = list(targets)
 
         final = build_graph(deps).invoke(initial, config=config)
+        final["llm_calls"] = counter.calls
         if final.get("success") and final.get("base_sha"):
             final["full_diff"] = get_diff_since(workdir, final["base_sha"])
         if post is not None:  # runs while the sandbox is still up (used by the evals)

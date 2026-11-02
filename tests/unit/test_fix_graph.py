@@ -158,6 +158,23 @@ def test_refuses_to_edit_the_target_test(repo):
     assert (repo / "tests" / "test_text.py").read_text() == TEST
 
 
+def test_a_fixer_that_needs_another_file_gets_it_on_the_next_attempt(repo):
+    ask = FixProposal(reasoning="need it", edits=[], need_more_files=["tests/test_text.py"])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [ask, proposal(GOOD)])
+    assert final["success"] and final["attempts"] == 2
+    assert final["relevant_files"] == ["textkit.py", "tests/test_text.py"]
+    assert "added to your context" in final["history"][0]["feedback"]
+
+
+def test_empty_edits_with_an_invalid_request_explain_how_to_ask(repo):
+    ask = FixProposal(reasoning="x", edits=[], need_more_files=["nope.py"])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [ask, proposal(GOOD)])
+    assert "need_more_files" in final["history"][0]["feedback"]
+    assert final["relevant_files"] == ["textkit.py"]
+
+
 def test_aborts_when_target_already_passes(repo):
     final = run(repo, FakeSandbox(target=[0], suites=[BASE]), [])
     assert "already pass" in final["error"]

@@ -5,17 +5,17 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from repodoctor.deps import Deps
-from repodoctor.nodes.util import clip, render_files
+from repodoctor.nodes.util import clip, existing_files, render_files
 from repodoctor.prompts import load_prompt
 from repodoctor.schemas import Edit
 from repodoctor.state import RepoDoctorState
 from repodoctor.tools.patch import PatchResult, apply_edits
 from repodoctor.tools.repo import get_diff, reset_to_clean
-from repodoctor.tools.search import SearchError, read_raw
 
 EDIT_PREVIEW = 600
 FEEDBACK_PREVIEW = 1500
 TEST_FILE_BUDGET = 20_000
+MAX_CONTEXT_FILES = 8
 
 
 def _norm(path: str) -> str:
@@ -24,24 +24,6 @@ def _norm(path: str) -> str:
 
 def _target_files(targets: list[str]) -> list[str]:
     return sorted({_norm(t.split("::")[0]) for t in targets})
-
-
-# def _render_files(root: Path, paths: list[str], budget: int) -> str:
-#     chunks: list[str] = []
-#     used = 0
-#     for p in paths:
-#         try:
-#             text = read_raw(root, p)
-#         except SearchError as e:
-#             chunks.append(f"### {p}\n(unavailable: {e})")
-#             continue
-#         block = f"### {p}\n```\n{text}\n```"
-#         if chunks and used + len(block) > budget:
-#             chunks.append(f"### {p}\n(omitted: context budget exhausted)")
-#             continue
-#         chunks.append(block)
-#         used += len(block)
-#     return "\n\n".join(chunks)
 
 
 def _history_text(history: list[dict]) -> str:
@@ -98,6 +80,18 @@ def _apply(root: Path, edits: list[Edit], protected: set[str]) -> PatchResult:
     return apply_edits(root, edits)
 
 
+def _no_edits_message(added: list[str]) -> str:
+    if added:
+        return (
+            "No edits were proposed. The files you asked for were added to your context "
+            f"for the next attempt: {', '.join(added)}."
+        )
+    return (
+        "No edits were proposed. You must return edits. If you need to see another file, "
+        "list its path in need_more_files."
+    )
+
+
 def make_fix(deps: Deps):
     system = load_prompt("fix")
 
@@ -115,10 +109,17 @@ def make_fix(deps: Deps):
             return {"error": f"The fix model failed on attempt {attempt}: "
                     f"{type(e).__name__}: {e}"}
 
+        relevant = list(state["relevant_files"])
         protected = set(_target_files(list(state["target_tests"])))
         result = _apply(root, proposal.edits, protected)
-        diff = get_diff(root, result.changed_files) if result.ok else ""
         errors = list(result.errors)
+        if not proposal.edits:
+            wanted = existing_files(root, proposal.need_more_files)
+            added = [f for f in wanted if f not in relevant]
+            relevant = [*relevant, *added][:MAX_CONTEXT_FILES]
+            errors = [_no_edits_message(added)]
+
+        diff = get_diff(root, result.changed_files) if result.ok else ""
         if result.ok and not diff.strip():
             errors = ["The edits did not change any code."]
 
@@ -132,6 +133,7 @@ def make_fix(deps: Deps):
             "attempts": attempt,
             "diff": diff,
             "patch_errors": errors,
+            "relevant_files": relevant,
             "history": [*state.get("history", []), entry],
         }
 

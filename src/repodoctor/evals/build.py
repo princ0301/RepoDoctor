@@ -25,6 +25,16 @@ class CaseRejected(RuntimeError):
     """The spec is not usable as an eval case (the message says why)."""
 
 
+def pair_problem(issue_closed_at: str, pr_created_at: str) -> str | None:
+    """None if the PR could have closed the issue, else the reason it could not."""
+    if issue_closed_at and pr_created_at and issue_closed_at < pr_created_at:
+        return (
+            "the issue was already closed when the PR was opened, so this PR did not "
+            "fix it (the PR text only mentions the issue)"
+        )
+    return None
+
+
 def build_case(
     spec: CaseSpec,
     settings: Settings,
@@ -41,6 +51,9 @@ def build_case(
     if issue.state != "closed":
         raise CaseRejected("the issue is not closed")
     pr = fetch_pr(client, ref, spec.fix_pr)
+    problem = pair_problem(issue.closed_at, pr.created_at)
+    if problem:
+        raise CaseRejected(problem)
 
     files = list_pr_files(client, ref, spec.fix_pr)
     test_files = [f.path for f in files if f.status != "removed" and is_test_path(f.path)]
