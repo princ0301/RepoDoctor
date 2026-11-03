@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from repodoctor.config import Settings
-from repodoctor.evals.build import apply_pr_changes, pair_problem
+from repodoctor.evals.build import apply_pr_changes, feature_signals, pair_problem
 from repodoctor.evals.cases import (
     CaseSpec,
     EvalCase,
@@ -20,7 +20,14 @@ from repodoctor.evals.cases import (
 )
 from repodoctor.evals.discover import discover
 from repodoctor.evals.grade import grade_tree
-from repodoctor.evals.run import CaseResult, classify, load_results, run_eval, summarize
+from repodoctor.evals.run import (
+    CaseResult,
+    attempt_kind,
+    classify,
+    load_results,
+    run_eval,
+    summarize,
+)
 from repodoctor.tools.github import PRFile, github_client
 from repodoctor.tools.repo import ProjectInfo, clone_repo, fetch_pull_head, head_sha, run_git
 from repodoctor.tools.sandbox import ExecResult
@@ -33,6 +40,52 @@ def case(**over) -> EvalCase:
         src_files=["src/x.py"], fail_to_pass=["tests.test_x::test_a"], pass_to_pass=[],
     )
     return EvalCase(**{**base, **over})
+
+
+def test_feature_signals():
+    assert feature_signals(["bug"], "Fix crash on empty input") == []
+    assert feature_signals(["Type: Enhancement"], "Fix x") == ["label 'Type: Enhancement'"]
+    assert "PR title" in feature_signals([], "Add option to truncate")[0]
+
+
+@pytest.mark.parametrize(
+    "feedback, kind",
+    [
+        ("The target test(s) pass and no tests regressed.", "passed"),
+        (
+            "Your edits could not be applied:\nNo edits were proposed. You must return",
+            "no_edits",
+        ),
+        (
+            "Your edits could not be applied:\nedit 1 (a.py): 'old' text not found. It",
+            "old_not_found",
+        ),
+        (
+            "Your edits could not be applied:\nedit 1 (a.py): 'old' text appears 3 times.",
+            "old_ambiguous",
+        ),
+        ("Your edits could not be applied:\nedit 1 (x.py): file does not exist", "bad_path"),
+        (
+            "Your edits could not be applied:\nt.py is a protected test file and must",
+            "edits_test_file",
+        ),
+        ("Your edits could not be applied:\nThe edits did not change any code.", "no_change"),
+        (
+            "Your edits could not be applied:\nYour last reply was not valid structured output",
+            "malformed_output",
+        ),
+        (
+            "The target test(s) still fail after your edits. Output:\nE timed out waiting",
+            "test_still_fails",
+        ),
+        ("The target test(s) timed out after your edits. Output:", "test_timeout"),
+        ("Your edits broke tests that passed before:\n- a::b: boom", "regression"),
+        ("The full test run produced no report:\nlog", "no_report"),
+        ("something unexpected", "other"),
+    ],
+)
+def test_attempt_kind(feedback, kind):
+    assert attempt_kind(feedback) == kind
 
 
 # ---------- paths and diffs ----------

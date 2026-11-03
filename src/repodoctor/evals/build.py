@@ -36,6 +36,19 @@ def pair_problem(issue_closed_at: str, pr_created_at: str) -> str | None:
     return None
 
 
+def feature_signals(labels: list[str], pr_title: str) -> list[str]:
+    """Hints that a case is a feature request, not a bug report (for humans to check)."""
+    signals = [
+        f"label '{lab}'"
+        for lab in labels
+        if any(k in lab.lower() for k in ("enhancement", "feature"))
+    ]
+    words = pr_title.split()
+    if words and words[0].lower() in ("add", "support", "allow", "introduce"):
+        signals.append(f"PR title starts with '{words[0]}'")
+    return signals
+
+
 def apply_pr_changes(root: Path, head: str, files: list[PRFile]) -> None:
     """Base tree plus exactly the files the PR changed, not the rest of the PR branch."""
     keep = [f.path for f in files if f.status != "removed"]

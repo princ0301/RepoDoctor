@@ -1,5 +1,6 @@
 import json
 import shutil
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from dotenv import load_dotenv
 
 from repodoctor.config import Settings, get_settings
 from repodoctor.demo import make_demo
-from repodoctor.evals.build import CaseRejected, build_case, pair_problem
+from repodoctor.evals.build import CaseRejected, build_case, feature_signals, pair_problem
 from repodoctor.evals.cases import (
     CaseSpec,
     case_id,
@@ -19,7 +20,7 @@ from repodoctor.evals.cases import (
     save_specs,
 )
 from repodoctor.evals.discover import discover
-from repodoctor.evals.run import load_results, run_eval, summarize
+from repodoctor.evals.run import attempt_kind, load_results, run_eval, summarize
 from repodoctor.graph import build_hello_graph
 from repodoctor.models import ENDPOINTS, ModelConfigError, make_chat_model, probe, role_specs
 from repodoctor.runner import (
@@ -497,6 +498,7 @@ def eval_inspect(
             typer.echo("=" * 78)
             typer.echo(f"{cid}   issue #{case.issue}   fixed by PR #{case.fix_pr}")
             typer.echo(f"\nISSUE: {issue.title}\n{issue.body.strip()[:1500]}")
+            typer.echo(f"Labels: {', '.join(issue.labels) or '-'}")
             typer.echo(f"\nPR: {pr_title}\n{pr_body.strip()[:1000]}")
             typer.echo(f"\nMaintainers changed: {', '.join(case.src_files)}")
             typer.echo(f"Fail-to-pass tests ({len(case.fail_to_pass)}):")
@@ -525,6 +527,11 @@ def eval_recheck(
             if problem:
                 flagged += 1
                 typer.echo(f"SUSPECT   {c.id}: {problem}")
+            signals = feature_signals(issue.labels, pr.title)
+            if signals:
+                typer.echo(
+                    f"REVIEW    {c.id}: looks like a feature request ({'; '.join(signals)})"
+                )
     typer.echo(f"{flagged} suspect pair(s) among {len(cases)} case(s)")
 
 
@@ -662,6 +669,34 @@ def eval_report(
                 typer.echo(f"edit {e['path']}:\n  old: {e['old']!r}\n  new: {e['new']!r}")
             typer.echo(f"feedback: {h['feedback']}")
         typer.echo("\n" + (r.diff or "(no diff)"))
+
+
+@app.command("eval-failures")
+def eval_failures(
+    results_files: list[Path],
+    include_excluded: bool = typer.Option(False, "--include-excluded"),
+) -> None:
+    """Why runs failed: how each fix attempt ended, per unresolved run and overall."""
+    skip = set() if include_excluded else _excluded_ids()
+    results = [r for f in results_files for r in load_results(f) if r.case_id not in skip]
+    unresolved_kinds: Counter = Counter()
+    resolved_kinds: Counter = Counter()
+    rows: list[str] = []
+    for r in results:
+        kinds = [attempt_kind(h.get("feedback") or "") for h in r.history]
+        failed = [k for k in kinds if k != "passed"]
+        (resolved_kinds if r.resolved else unresolved_kinds).update(failed)
+        if not r.resolved:
+            path = " > ".join(kinds) or r.detail[:70] or "-"
+            rows.append(f"{r.case_id:<38} t{r.trial} {r.outcome:<14} {path}")
+    names = sorted(
+        set(unresolved_kinds) | set(resolved_kinds),
+        key=lambda k: -(unresolved_kinds[k] + resolved_kinds[k]),
+    )
+    typer.echo(f"{'a fix attempt ended with':<26} {'unresolved runs':>16} {'resolved runs':>14}")
+    for k in names:
+        typer.echo(f"{k:<26} {unresolved_kinds[k]:>16} {resolved_kinds[k]:>14}")
+    typer.echo("\n" + "\n".join(rows))
 
 if __name__ == "__main__":
     app()

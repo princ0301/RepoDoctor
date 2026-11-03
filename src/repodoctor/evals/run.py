@@ -13,6 +13,38 @@ from repodoctor.evals.grade import grade_tree
 from repodoctor.runner import run_fix_issue
 
 
+_PATCH_KINDS = (
+    ("No edits were proposed", "no_edits"),
+    ("not valid structured output", "malformed_output"),
+    ("protected test file", "edits_test_file"),
+    ("'old' text not found", "old_not_found"),
+    ("'old' text appears", "old_ambiguous"),
+    ("does not exist", "bad_path"),
+    ("outside the repository", "bad_path"),
+    ("did not change any code", "no_change"),
+)
+
+
+def attempt_kind(feedback: str) -> str:
+    """Name the way one fix attempt ended, from the feedback it produced."""
+    first = feedback.split("\n", 1)[0]  # test output below it could contain anything
+    if "pass and no tests regressed" in first:
+        return "passed"
+    if "still fail" in first:
+        return "test_still_fails"
+    if "timed out" in first:
+        return "test_timeout"
+    if "broke tests" in first:
+        return "regression"
+    if "full test run produced no report" in first:
+        return "no_report"
+    head = feedback[:400]
+    for needle, kind in _PATCH_KINDS:
+        if needle in head:
+            return kind
+    return "other"
+
+
 @dataclass
 class CaseResult:
     case_id: str
@@ -216,5 +248,7 @@ def summarize(results: list[CaseResult]) -> str:
         parts = [f"{k}={v / n:.0f}s" for k, v in node_time.most_common()]
         parts.append(f"other={other / n:.0f}s")
         lines.append("Mean time by step:  " + ", ".join(parts))
+    secs = sorted(r.seconds for r in results)
+    lines.append(f"Median time:        {secs[len(secs) // 2]:.0f}s per run")
     lines.append(f"Mean time:          {sum(r.seconds for r in results) / n:.0f}s per run")
     return "\n".join(lines)
