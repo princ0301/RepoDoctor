@@ -1,6 +1,7 @@
 """Write and validate a failing test for the issue (unless the user supplied one)."""
 
 import ast
+import warnings
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -28,7 +29,9 @@ def static_problem(test: ReproTest) -> str | None:
     if not test.test_name.startswith("test"):
         return "test_name must start with 'test'."
     try:
-        tree = ast.parse(test.code)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", SyntaxWarning)
+            tree = ast.parse(test.code)
     except SyntaxError as e:
         return f"The test file has a syntax error: {e}"
     funcs = {n.name for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)}

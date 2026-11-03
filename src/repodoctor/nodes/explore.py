@@ -1,6 +1,4 @@
-from pathlib import Path
-
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
@@ -46,6 +44,20 @@ def _run_tool(tools: dict[str, BaseTool], call: dict) -> str:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
+def _summary_text(result) -> str:
+    named = ", ".join(result.relevant_files) or "(none)"
+    return f"relevant_files: {named}\nhypothesis: {result.hypothesis}"
+
+
+def _bad_paths_message(named: list[str]) -> str:
+    return (
+        "None of the files you named exist in the repository: "
+        + (", ".join(named) or "(you named no files)")
+        + ". Report again, using only paths exactly as the tools showed them "
+        "(for example in find_definition or list_dir results)."
+    )
+
+
 def make_explore(deps: Deps):
     system = load_prompt("explore")
     tools = {t.name: t for t in deps.tools}
@@ -68,12 +80,21 @@ def make_explore(deps: Deps):
                     )
             messages.append(HumanMessage(SUMMARY_REQUEST))
             result = deps.summarizer.invoke(messages, config)
+            files = existing_files(deps.workdir, result.relevant_files)
+            if not files:
+                messages.append(AIMessage(content=_summary_text(result)))
+                messages.append(HumanMessage(_bad_paths_message(result.relevant_files)))
+                result = deps.summarizer.invoke(messages, config)
+                files = existing_files(deps.workdir, result.relevant_files)
         except Exception as e:  # rate limits, auth, malformed output after fallbacks
             return {"error": f"The explore model failed: {type(e).__name__}: {e}"}
 
-        files = existing_files(deps.workdir, result.relevant_files)
         if not files:
-            return {"error": "The explorer did not identify any existing source file."}
+            named = ", ".join(result.relevant_files) or "nothing"
+            return {
+                "error": "The explorer did not identify any existing source file "
+                f"(it named: {named})."
+            }
         return {
             "relevant_files": files,
             "explored_files": files,

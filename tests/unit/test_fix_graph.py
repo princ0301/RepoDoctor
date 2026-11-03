@@ -117,7 +117,7 @@ def repo_two_files(make_git_repo):
 
 
 def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET,), repros=(),
-        relevant=("textkit.py",), **settings_kw):
+        relevant=("textkit.py",), summarizer=None, **settings_kw):
     tools = make_search_tools(repo)
     deps = Deps(
         settings=Settings(_env_file=None, max_attempts=max_attempts, **settings_kw),
@@ -126,7 +126,7 @@ def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET
         workdir=repo,
         tools=tools,
         explorer=explorer or scripted([AIMessage(content="done")]),
-        summarizer=RunnableLambda(
+        summarizer=summarizer or RunnableLambda(
             lambda _m: ExploreResult(relevant_files=list(relevant), hypothesis="off by one")
         ),
         fixer=scripted(proposals),
@@ -136,6 +136,22 @@ def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET
     if targets:
         state["target_tests"] = list(targets)
     return build_graph(deps).invoke(state)
+
+
+def test_explorer_gets_a_second_chance_when_its_paths_do_not_exist(repo):
+    summarizer = scripted([
+        ExploreResult(relevant_files=["nope/missing.py"], hypothesis="a"),
+        ExploreResult(relevant_files=["textkit.py"], hypothesis="b"),
+    ])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [proposal(GOOD)], summarizer=summarizer)
+    assert final["success"] and final["hypothesis"] == "b"
+
+
+def test_explorer_error_names_the_files_it_invented(repo):
+    summarizer = scripted([ExploreResult(relevant_files=["a/x.py"], hypothesis="a")] * 2)
+    final = run(repo, FakeSandbox(target=[1], suites=[BASE]), [], summarizer=summarizer)
+    assert "explorer did not identify" in final["error"] and "a/x.py" in final["error"]
 
 
 # ---------- user-supplied failing test ----------

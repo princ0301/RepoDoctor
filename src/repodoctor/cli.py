@@ -556,6 +556,10 @@ def eval_run(
     resume: Path | None = typer.Option(
         None, "--resume", help="results.jsonl of an interrupted run: continue it"
     ),
+    rerun_failed: Path | None = typer.Option(
+        None, "--rerun-failed",
+        help="results.jsonl of an earlier run: only the cases with an unresolved run in it",
+    ),
 ) -> None:
     """Run the agent on every case and grade it with the maintainers' tests."""
     if not cases_file.exists():
@@ -570,6 +574,9 @@ def eval_run(
     if not include_excluded:
         skip = _excluded_ids()
         cases = [c for c in cases if c.id not in skip]
+    if rerun_failed:
+        unresolved = {r.case_id for r in load_results(rerun_failed) if not r.resolved}
+        cases = [c for c in cases if c.id in unresolved]
     if only:
         cases = [c for c in cases if c.id in only]
     if split:

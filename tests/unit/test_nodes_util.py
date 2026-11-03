@@ -1,4 +1,21 @@
-from repodoctor.nodes.util import render_files
+from repodoctor.nodes.util import existing_files, render_files
+
+
+def test_existing_files_accepts_a_unique_suffix(make_git_repo):
+    root = make_git_repo({"src/pkg/core.py": "x\n", "src/pkg/other.py": "y\n"})
+    assert existing_files(root, ["pkg/core.py", "core.py"]) == ["src/pkg/core.py"]
+
+
+def test_existing_files_rejects_an_ambiguous_suffix(make_git_repo):
+    root = make_git_repo({"a/util.py": "x\n", "b/util.py": "y\n"})
+    assert existing_files(root, ["util.py"]) == []
+
+
+def test_existing_files_keeps_exact_paths_and_drops_unknown_or_unsafe(make_git_repo):
+    root = make_git_repo({"src/a.py": "x\n"})
+    assert existing_files(root, ["./src/a.py", "nope.py", "../x.py", "/etc/passwd"]) == [
+        "src/a.py"
+    ]
 
 
 def test_render_files_marks_what_the_budget_cut(tmp_path):

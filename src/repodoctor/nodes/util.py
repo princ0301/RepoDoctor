@@ -4,6 +4,7 @@ from langchain_core.exceptions import OutputParserException
 from pydantic import ValidationError
 
 from repodoctor.tools.paths import safe_resolve
+from repodoctor.tools.repo import GitError, run_git
 from repodoctor.tools.search import SearchError, read_raw
 
 
@@ -21,15 +22,36 @@ def is_malformed_output(e: Exception) -> bool:
     return isinstance(e, ValidationError | OutputParserException)
 
 
+def _tracked_files(root: Path) -> list[str]:
+    try:
+        return run_git("ls-files", cwd=root).splitlines()
+    except GitError:
+        return []
+
+
 def existing_files(root: Path, paths: list[str], limit: int = 5) -> list[str]:
-    """Paths that exist inside the repo, normalized and de-duplicated."""
+    """Paths that exist inside the repo, normalized and de-duplicated.
+
+    A path that does not exist is still accepted when exactly one tracked file ends with
+    it (models often drop a leading 'src/').
+    """
+    tracked: list[str] | None = None
     seen: set[str] = set()
     out: list[str] = []
     for raw in paths:
-        p = safe_resolve(root, raw.strip())
-        if p is None or not p.is_file():
+        wanted = raw.strip().replace("\\", "/").removeprefix("./").lstrip("/")
+        if not wanted:
             continue
-        rel = p.relative_to(root.resolve()).as_posix()
+        p = safe_resolve(root, wanted)
+        if p is not None and p.is_file():
+            rel = p.relative_to(root.resolve()).as_posix()
+        else:
+            if tracked is None:
+                tracked = _tracked_files(root)
+            hits = [t for t in tracked if t == wanted or t.endswith("/" + wanted)]
+            if len(hits) != 1:
+                continue
+            rel = hits[0]
         if rel not in seen:
             seen.add(rel)
             out.append(rel)

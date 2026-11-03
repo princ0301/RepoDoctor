@@ -107,8 +107,11 @@ def test_cases_and_specs_round_trip(tmp_path):
     [
         ({"error": "Could not write a test that reproduces the issue after 3"}, None, "no_repro"),
         ({"error": "The fix model failed on attempt 1: boom"}, None, "model_error"),
-        ({"error": "The explorer did not identify any existing source file."}, None,
-         "explore_failed"),
+        (
+            {"error": "The explorer did not identify any existing source file (it named: a.py)."},
+            None,
+            "explore_failed",
+        ),
         ({"error": "Dependency install failed (exit 1)"}, None, "setup_error"),
         ({"success": False}, None, "fix_failed"),
         ({"success": True}, None, "grading_error"),
