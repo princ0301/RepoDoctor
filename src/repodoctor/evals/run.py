@@ -72,6 +72,7 @@ class CaseResult:
     timings: dict = field(default_factory=dict)
     context_omitted: list[str] = field(default_factory=list)
     explored_files: list[str] = field(default_factory=list)
+    edited_tests: list[str] = field(default_factory=list)
 
 
 def _slim_history(history: list[dict]) -> list[dict]:
@@ -174,6 +175,7 @@ def run_case(
         timings=final.get("timings", {}),
         context_omitted=final.get("context_omitted", []),
         explored_files=final.get("explored_files", []),
+        edited_tests=final.get("edited_tests", []),
     )
 
 
@@ -284,6 +286,12 @@ def summarize(
     failed_calls = sum(r.failed_calls for r in results)
     if failed_calls:
         lines.append(f"Failed model calls: {failed_calls} (retried or sent to a fallback)")
+    edited = [r for r in results if r.edited_tests]
+    if edited:
+        lines.append(
+            f"Runs that edited existing tests: {len(edited)} "
+            f"(resolved: {sum(r.resolved for r in edited)})"
+        )
     secs = sorted(r.seconds for r in results)
     lines.append(f"Median time:        {secs[len(secs) // 2]:.0f}s per run")
     lines.append(f"Mean time:          {sum(r.seconds for r in results) / n:.0f}s per run")

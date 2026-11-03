@@ -1,4 +1,4 @@
-from repodoctor.nodes.util import existing_files, render_files, repo_file_list
+from repodoctor.nodes.util import existing_files, render_files, repo_file_list, test_file_of
 
 
 def test_repo_file_list_puts_source_before_tests(make_git_repo):
@@ -46,3 +46,10 @@ def test_render_files_always_shows_the_first_file(tmp_path):
 def test_render_files_reports_unavailable_files(tmp_path):
     text, omitted = render_files(tmp_path, ["missing.py"], budget=100)
     assert "unavailable" in text and omitted == []
+
+def test_test_file_of_maps_a_junit_id_to_its_file(tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text("x\n")
+    assert test_file_of(tmp_path, "tests.test_a.TestA::test_m[1]") == "tests/test_a.py"
+    assert test_file_of(tmp_path, "tests.test_a::test_m") == "tests/test_a.py"
+    assert test_file_of(tmp_path, "other.mod::test_m") is None

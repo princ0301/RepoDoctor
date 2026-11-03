@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     sandbox_memory: str = "2g"
     sandbox_cpus: float = 2.0
 
+    allow_test_updates: bool = False
+
     # --- Paths ---
     work_dir: Path = Path(".repodoctor/work")   # where repos get cloned (gitignored)
 

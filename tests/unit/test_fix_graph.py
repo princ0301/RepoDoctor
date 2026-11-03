@@ -31,6 +31,7 @@ TARGET = "tests/test_text.py::test_exact"
 GOOD = Edit(path="textkit.py", old="if len(text) < max_len:", new="if len(text) <= max_len:")
 BAD = Edit(path="textkit.py", old="this text does not exist", new="x")
 TOUCH_TEST = Edit(path="tests/test_text.py", old="== 'hello'", new="== 'he...'")
+OLD_TEST_EDIT = Edit(path="tests/test_old.py", old="1 == 1", new="1 == 2")
 
 REPRO_CODE = (
     "from textkit import truncate\n\n"
@@ -47,6 +48,9 @@ BASE = SuiteReport(total=2, passed=1, failed=1, failing={"tests.test_text::test_
 CLEAN = SuiteReport(total=2, passed=2)
 REGRESSED = SuiteReport(
     total=2, passed=1, failed=1, failing={"tests.test_text::test_other": "broke"}
+)
+REGRESSED_OLD = SuiteReport(
+    total=3, passed=2, failed=1, failing={"tests.test_old::test_a": "boom"}
 )
 NAME_ERROR = SuiteReport(
     total=1, failed=1, failing={"t::x": "NameError: name 'foo' is not defined"}
@@ -119,12 +123,27 @@ def repo_two_files(make_git_repo):
     })
 
 
+@pytest.fixture
+def repo_with_old_test(make_git_repo):
+    return make_git_repo({
+        "textkit.py": CODE,
+        "tests/test_text.py": TEST,
+        "tests/test_old.py": "def test_a():\n    assert 1 == 1\n",
+    })
+
+
 def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET,), repros=(),
         relevant=("textkit.py",), summarizer=None, fixer=None, timeout_s=0, clock=None,
         **settings_kw):
     tools = make_search_tools(repo)
+    allow_test_updates = settings_kw.pop("allow_test_updates", False)
     deps = Deps(
-        settings=Settings(_env_file=None, max_attempts=max_attempts, **settings_kw),
+        settings=Settings(
+            _env_file=None,
+            max_attempts=max_attempts,
+            allow_test_updates=allow_test_updates,
+            **settings_kw,
+        ),
         sandbox=sandbox,
         info=ProjectInfo(True, test_command=["python", "-m", "pytest"]),
         workdir=repo,
@@ -249,6 +268,41 @@ def test_retries_after_regression(repo):
     final = run(repo, sandbox, [proposal(GOOD), proposal(GOOD)])
     assert final["success"] and final["attempts"] == 2
     assert "broke tests" in final["history"][0]["feedback"]
+
+
+def test_test_updates_show_the_broken_test_file_and_allow_editing_it(repo_with_old_test):
+    sandbox = FakeSandbox(target=[1, 0, 0], suites=[BASE, REGRESSED_OLD, CLEAN])
+    final = run(
+        repo_with_old_test,
+        sandbox,
+        [proposal(GOOD), proposal(GOOD, OLD_TEST_EDIT)],
+        allow_test_updates=True,
+    )
+    assert final["success"] and final["attempts"] == 2
+    assert final["relevant_files"][0] == "tests/test_old.py"
+    assert final["edited_tests"] == ["tests/test_old.py"]
+
+
+def test_without_test_updates_the_broken_test_file_is_not_promoted(repo_with_old_test):
+    sandbox = FakeSandbox(target=[1, 0, 0], suites=[BASE, REGRESSED_OLD, REGRESSED_OLD])
+    final = run(
+        repo_with_old_test, sandbox, [proposal(GOOD), proposal(GOOD)], max_attempts=2
+    )
+    assert not final["success"] and final["relevant_files"] == ["textkit.py"]
+    assert final["edited_tests"] == []
+
+
+def test_explorer_falls_back_to_the_files_it_read(repo):
+    explorer = scripted([
+        AIMessage(content="", tool_calls=[
+            {"name": "read_file", "args": {"path": "textkit.py"}, "id": "c1"}
+        ]),
+        AIMessage(content="done"),
+    ])
+    summarizer = scripted([ExploreResult(relevant_files=[], hypothesis="")] * 2)
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [proposal(GOOD)], explorer=explorer, summarizer=summarizer)
+    assert final["success"] and final["relevant_files"] == ["textkit.py"]
 
 
 def test_refuses_to_edit_the_target_test(repo):

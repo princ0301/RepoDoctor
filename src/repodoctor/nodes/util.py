@@ -52,6 +52,19 @@ def repo_file_list(root: Path, max_files: int = 200, max_chars: int = 6000) -> s
     return text
 
 
+def test_file_of(root: Path, test_id: str) -> str | None:
+    """File of a JUnit-style test id like 'tests.test_a.TestA::test_m[1]'."""
+    parts = test_id.partition("::")[0].split(".")
+    for k in range(len(parts), 0, -1):
+        rel = "/".join(parts[:k]) + ".py"
+        if (root / rel).is_file():
+            return rel
+    return None
+
+
+test_file_of.__test__ = False  # prevent pytest from collecting this public helper when imported
+
+
 def existing_files(root: Path, paths: list[str], limit: int = 5) -> list[str]:
     """Paths that exist inside the repo, normalized and de-duplicated.
 

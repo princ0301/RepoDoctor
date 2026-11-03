@@ -110,6 +110,11 @@ def _print_result(final: dict, settings: Settings) -> None:
     diff = final.get("full_diff") or final.get("diff")
     if diff:
         typer.echo("\n" + diff)
+    if final.get("edited_tests"):
+        typer.echo(
+            "NOTE    this change modifies existing test files, review them: "
+            + ", ".join(final["edited_tests"])
+        )
     if final.get("success"):
         typer.echo("RESULT: SUCCESS (nothing was pushed; the diff above is the change)")
         return

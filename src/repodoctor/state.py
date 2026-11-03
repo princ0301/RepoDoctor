@@ -1,5 +1,6 @@
 from typing import TypedDict
 
+
 class RepoDoctorState(TypedDict, total=False):
     # input
     issue_title: str
@@ -26,6 +27,8 @@ class RepoDoctorState(TypedDict, total=False):
     history: list[dict]
     patch_errors: list[str]
     context_omitted: list[str]
+    regressed_tests: list[str]
+    edited_tests: list[str]
     diff: str
     feedback: str
     success: bool

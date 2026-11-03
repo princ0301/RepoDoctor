@@ -1,3 +1,5 @@
+from collections import Counter
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
@@ -64,6 +66,7 @@ def make_explore(deps: Deps):
 
     def explore(state: RepoDoctorState, config: RunnableConfig) -> dict:
         messages: list = [SystemMessage(system), HumanMessage(_explore_request(state))]
+        read_paths: Counter[str] = Counter()
         try:
             for _ in range(deps.settings.explore_max_steps):
                 ai = deps.explorer.invoke(messages, config)
@@ -71,6 +74,10 @@ def make_explore(deps: Deps):
                 if not ai.tool_calls:
                     break
                 for i, call in enumerate(ai.tool_calls):
+                    if call["name"] == "read_file":
+                        path = (call.get("args") or {}).get("path")
+                        if isinstance(path, str):
+                            read_paths[path] += 1
                     messages.append(
                         ToolMessage(
                             content=_run_tool(tools, call),
@@ -81,7 +88,7 @@ def make_explore(deps: Deps):
             messages.append(HumanMessage(SUMMARY_REQUEST))
             result = deps.summarizer.invoke(messages, config)
             files = existing_files(deps.workdir, result.relevant_files)
-            if not files:
+            if not files:  # one more chance, told exactly what was wrong
                 messages.append(AIMessage(content=_summary_text(result)))
                 messages.append(HumanMessage(_bad_paths_message(result.relevant_files)))
                 result = deps.summarizer.invoke(messages, config)
@@ -89,16 +96,17 @@ def make_explore(deps: Deps):
         except Exception as e:  # rate limits, auth, malformed output after fallbacks
             return {"error": f"The explore model failed: {type(e).__name__}: {e}"}
 
+        hypothesis = result.hypothesis
+        if not files:  # the model named nothing usable: fall back to what it actually read
+            files = existing_files(deps.workdir, [p for p, _ in read_paths.most_common()])
+            if files:
+                hypothesis = hypothesis or "(no summary from the explorer; using the files it read)"
         if not files:
             named = ", ".join(result.relevant_files) or "nothing"
             return {
                 "error": "The explorer did not identify any existing source file "
                 f"(it named: {named})."
             }
-        return {
-            "relevant_files": files,
-            "explored_files": files,
-            "hypothesis": result.hypothesis,
-        }
+        return {"relevant_files": files, "explored_files": files, "hypothesis": hypothesis}
 
     return explore

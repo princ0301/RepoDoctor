@@ -5,12 +5,14 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from repodoctor.deps import Deps
+from repodoctor.evals.cases import is_test_path
 from repodoctor.nodes.util import (
     clip,
     existing_files,
     is_malformed_output,
     render_files,
     repo_file_list,
+    test_file_of,
 )
 from repodoctor.prompts import load_prompt
 from repodoctor.schemas import Edit
@@ -122,13 +124,26 @@ def _no_edits_message(
 
 def make_fix(deps: Deps):
     system = load_prompt("fix")
+    if deps.settings.allow_test_updates:
+        system += "\n\n" + load_prompt("fix_test_updates")
 
     def fix(state: RepoDoctorState, config: RunnableConfig) -> dict:
         root = deps.workdir
         attempt = state.get("attempts", 0) + 1
         reset_to_clean(root, set(state.get("untracked_baseline", [])))
 
-        request, omitted = _fix_request(state, root, deps.settings.fix_context_chars)
+        relevant = list(state["relevant_files"])
+        if deps.settings.allow_test_updates:
+            # show the tests the last attempt broke, so they can be updated if the issue demands it
+            promoted = list(dict.fromkeys(
+                f for f in (test_file_of(root, t) for t in state.get("regressed_tests", [])) if f
+            ))
+            relevant = [*promoted, *(f for f in relevant if f not in promoted)]
+            relevant = relevant[:MAX_CONTEXT_FILES]
+
+        request, omitted = _fix_request(
+            {**state, "relevant_files": relevant}, root, deps.settings.fix_context_chars
+        )
         try:
             proposal = deps.fixer.invoke(
                 [SystemMessage(system), HumanMessage(request)], config
@@ -147,7 +162,6 @@ def make_fix(deps: Deps):
                 "history": [*state.get("history", []), entry],
             }
 
-        relevant = list(state["relevant_files"])
         protected = set(_target_files(list(state["target_tests"])))
         result = _apply(root, proposal.edits, protected)
         errors = list(result.errors)
@@ -155,7 +169,8 @@ def make_fix(deps: Deps):
             wanted = existing_files(root, proposal.need_more_files)
             shown = [f for f in wanted if f in relevant and f not in omitted]
             unknown = [
-                r for r in proposal.need_more_files if r.strip() and not existing_files(root, [r])
+                r for r in proposal.need_more_files
+                if r.strip() and not existing_files(root, [r])
             ]
             relevant = [*wanted, *(f for f in relevant if f not in wanted)][:MAX_CONTEXT_FILES]
             errors = [_no_edits_message(wanted, shown, omitted, unknown)]
@@ -174,8 +189,9 @@ def make_fix(deps: Deps):
             "attempts": attempt,
             "diff": diff,
             "patch_errors": errors,
-            "context_omitted": omitted,
             "relevant_files": relevant,
+            "context_omitted": omitted,
+            "edited_tests": [p for p in result.changed_files if is_test_path(p)],
             "history": [*state.get("history", []), entry],
         }
 

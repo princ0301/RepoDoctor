@@ -8,10 +8,13 @@ def make_verify(deps: Deps):
         s = deps.settings
         history = list(state.get("history", []))
 
-        def finish(success: bool, feedback: str) -> dict:
+        def finish(success: bool, feedback: str, regressed: list[str] | None = None) -> dict:
             if history:
                 history[-1] = {**history[-1], "feedback": feedback}
-            return {"success": success, "feedback": feedback, "history": history}
+            return {
+                "success": success, "feedback": feedback, "history": history,
+                "regressed_tests": regressed or [],
+            }
 
         if state.get("patch_errors"):
             return finish(
@@ -35,7 +38,10 @@ def make_verify(deps: Deps):
         regressions = new_failures(SuiteReport(**state["baseline"]), report)
         if regressions:
             lines = [f"- {k}: {v}" for k, v in list(regressions.items())[:10]]
-            return finish(False, "Your edits broke tests that passed before:\n" + "\n".join(lines))
+            return finish(
+                False, "Your edits broke tests that passed before:\n" + "\n".join(lines),
+                list(regressions),
+            )
 
         return finish(True, "The target test(s) pass and no tests regressed.")
 
