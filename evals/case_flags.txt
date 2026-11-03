@@ -1,0 +1,17 @@
+# Case flags. One line per case: <id>  [tag]  # reason
+# [spec]  the tests require names or exact output the issue does not give. eval-run skips these.
+# [scope] the tests need the fix to generalize beyond the reported instance. These still run
+#         and are reported separately: stopping at the first instance is a real weakness.
+# Decide from the issue and PR text only, never from how the agent performed.
+python-humanize__humanize-62     [spec]    # tests encode inf/NaN behavior decided in PR review
+pallets__click-3740              [spec]    # one required test (test_prompt_required_false) is unrelated to the issue
+prettytable__prettytable-40      [spec]    # feature request; tests exercise new options the issue does not name
+prettytable__prettytable-54      [spec]    # feature request; the PR adds a differently named option
+prettytable__prettytable-165     [spec]    # feature request; the PR adds the option use_header_width
+prettytable__prettytable-288     [spec]    # vague report; tests compare exact renderings of the new algorithm
+prettytable__prettytable-200     [spec]    # issue asks for multiline column headers; the PR implements multiline titles
+prettytable__prettytable-342     [spec]    # the issue says no markdown caption syntax exists; the PR picked one
+prettytable__prettytable-398     [scope]   # issue names only min_width; the PR covers eight attributes
+prettytable__prettytable-272     [scope]   # issue reports max_width; a test also needs float_format
+prettytable__prettytable-354     [scope]   # fields and sort_key share the root cause of the reported sortby
+pallets__click-2012              [scope]   # covers leftovers of an earlier partial fix

@@ -12,14 +12,17 @@ from repodoctor.config import Settings, get_settings
 from repodoctor.demo import make_demo
 from repodoctor.evals.build import CaseRejected, build_case, feature_signals, pair_problem
 from repodoctor.evals.cases import (
-    CaseSpec,
     case_id,
+    is_test_path,
     load_cases,
     load_specs,
+    parse_case_flags,
+    removed_line_count,
     save_cases,
     save_specs,
 )
 from repodoctor.evals.discover import discover
+from repodoctor.evals.gold import gold_test_source
 from repodoctor.evals.run import attempt_kind, load_results, run_eval, summarize
 from repodoctor.graph import build_hello_graph
 from repodoctor.models import ENDPOINTS, ModelConfigError, make_chat_model, probe, role_specs
@@ -32,10 +35,12 @@ from repodoctor.runner import (
 )
 from repodoctor.tools.github import (
     GitHubError,
+    fetch_file_text,
     fetch_issue,
     fetch_pr,
     fetch_pr_text,
     github_client,
+    list_pr_files,
 )
 from repodoctor.tools.issue_ref import (
     InvalidIssueUrl,
@@ -323,7 +328,9 @@ def fix(
     settings = get_settings()
     try:
         title, body = parse_issue_file(issue_file.read_text(encoding="utf-8"))
-        final = run_fix(FixRequest(repo_dir, title, body, list(test or [])), settings)
+        final = run_fix(
+            FixRequest(repo_dir, title, body, list(test or [])), settings, progress=typer.echo
+        )
     except RUN_ERRORS as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
@@ -356,7 +363,7 @@ def fix_issue(
     try:
         final, intake = run_fix_issue(
             ref, settings, replay=replay, targets=list(test or []), fix_pr=fix_pr,
-            log=typer.echo,
+            log=typer.echo, progress=typer.echo,
         )
     except RUN_ERRORS as e:
         typer.echo(f"ERROR   {e}")
@@ -462,18 +469,22 @@ def eval_build(
     typer.echo(f"{len(cases)} case(s) in {out}")
 
 
-EXCLUDED_FILE = Path("evals/excluded.txt")
+FLAGS_FILE = Path("evals/case_flags.txt")
 DEV_FILE = Path("evals/dev_ids.txt")
 
 
-def _excluded_ids(path: Path = EXCLUDED_FILE) -> set[str]:
-    if not path.exists():
-        return set()
-    return {
-        line.split()[0]
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    }
+def _case_flags() -> dict[str, str]:
+    if not FLAGS_FILE.exists():
+        return {}
+    return parse_case_flags(FLAGS_FILE.read_text(encoding="utf-8"))
+
+
+def _excluded_ids() -> set[str]:
+    return {cid for cid, tag in _case_flags().items() if tag == "spec"}
+
+
+def _scope_ids() -> set[str]:
+    return {cid for cid, tag in _case_flags().items() if tag == "scope"}
 
 
 @app.command("eval-inspect")
@@ -512,27 +523,41 @@ def eval_inspect(
 def eval_recheck(
     cases_file: Path = typer.Option(Path("evals/cases.json"), "--cases"),
 ) -> None:
-    """Re-check the issue/PR pairing of built cases (GitHub API only, no sandbox)."""
+    """Re-check built cases (GitHub API only): pairing, feature signals, edited tests."""
     cases = load_cases(cases_file)
-    flagged = 0
+    flagged = changed_tests = 0
     with github_client(get_settings().github_token) as client:
         for c in cases:
             try:
                 issue = fetch_issue(client, c.ref)
                 pr = fetch_pr(client, c.ref, c.fix_pr)
+                files = list_pr_files(client, c.ref, c.fix_pr)
             except GitHubError as e:
                 typer.echo(f"ERROR     {c.id}: {e}")
                 continue
             problem = pair_problem(issue.closed_at, pr.created_at)
             if problem:
                 flagged += 1
-                typer.echo(f"SUSPECT   {c.id}: {problem}")
+                typer.echo(f"SUSPECT    {c.id}: {problem}")
             signals = feature_signals(issue.labels, pr.title)
             if signals:
                 typer.echo(
-                    f"REVIEW    {c.id}: looks like a feature request ({'; '.join(signals)})"
+                    f"REVIEW     {c.id}: looks like a feature request ({'; '.join(signals)})"
                 )
-    typer.echo(f"{flagged} suspect pair(s) among {len(cases)} case(s)")
+            edited = {
+                f.path: removed_line_count(f.patch)
+                for f in files
+                if f.path.endswith(".py") and is_test_path(f.path)
+            }
+            edited = {p: n for p, n in edited.items() if n}
+            if edited:
+                changed_tests += 1
+                detail = ", ".join(f"{p}: {n}" for p, n in edited.items())
+                typer.echo(f"TESTCHANGE {c.id}: the PR edits existing test lines ({detail})")
+    typer.echo(
+        f"{flagged} suspect pair(s); {changed_tests} case(s) edit existing tests; "
+        f"{len(cases)} checked"
+    )
 
 
 def _dev_ids(path: Path = Path("evals/dev_ids.txt")) -> set[str]:
@@ -635,7 +660,38 @@ def eval_run(
         cases, settings, trials=trials, label=label, results_file=results_file,
         done=done, log=typer.echo,
     )
-    typer.echo("\n" + summarize(load_results(results_file)))
+    typer.echo("\n" + summarize(load_results(results_file), scope_ids=_scope_ids()))
+
+
+@app.command("eval-gold")
+def eval_gold(
+    cid: str = typer.Argument(..., metavar="CASE_ID"),
+    cases_file: Path = typer.Option(Path("evals/cases.json"), "--cases"),
+    limit: int = typer.Option(6, help="Maximum number of tests to print"),
+) -> None:
+    """Print the source of the maintainers' fail-to-pass tests (what the grader checks)."""
+    case = next((c for c in load_cases(cases_file) if c.id == cid), None)
+    if case is None:
+        typer.echo(f"ERROR   unknown case {cid}")
+        raise typer.Exit(1)
+    try:
+        with github_client(get_settings().github_token) as client:
+            texts = {
+                p: fetch_file_text(client, case.ref, p, case.head_sha) for p in case.run_targets
+            }
+    except GitHubError as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    shown: set[tuple[str, str]] = set()
+    for test_id in case.fail_to_pass:
+        found = gold_test_source(test_id, texts)
+        if found is None or found in shown:
+            continue
+        shown.add(found)
+        if len(shown) > limit:
+            typer.echo(f"... more tests not shown (--limit {limit})")
+            break
+        typer.echo(f"--- {found[0]}  ({test_id}) ---\n{found[1]}\n")
 
 
 @app.command("eval-report")
@@ -648,7 +704,7 @@ def eval_report(
     """Print the summary of a finished (or interrupted) eval run."""
     results = load_results(results_file)
     if not show:
-        typer.echo(summarize(results))
+        typer.echo(summarize(results, scope_ids=_scope_ids()))
         return
     for r in (r for r in results if r.case_id == show):
         typer.echo(f"== {r.case_id} trial {r.trial}: {r.outcome} ==")
@@ -660,6 +716,7 @@ def eval_report(
             typer.echo(f"Fixer's context at the end: {', '.join(r.relevant_files)}")
         typer.echo(f"Hypothesis: {r.hypothesis or '-'}\n")
         typer.echo(f"Time by step: {r.timings or '-'}")
+        typer.echo(f"Slowest model calls: {r.slowest_calls or '-'}")
         if r.context_omitted:
             typer.echo(f"Not shown to the fixer (budget): {', '.join(r.context_omitted)}")
         for h in r.history:

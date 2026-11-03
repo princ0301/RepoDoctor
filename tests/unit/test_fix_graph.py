@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableLambda
@@ -7,6 +9,7 @@ from repodoctor.config import Settings
 from repodoctor.deps import Deps
 from repodoctor.graph import build_graph
 from repodoctor.nodes.search_tools import make_search_tools
+from repodoctor.runner import run_graph
 from repodoctor.schemas import Edit, ExploreResult, FixProposal, ReproTest
 from repodoctor.tools.repo import ProjectInfo, run_git
 from repodoctor.tools.sandbox import ExecResult
@@ -117,7 +120,8 @@ def repo_two_files(make_git_repo):
 
 
 def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET,), repros=(),
-        relevant=("textkit.py",), summarizer=None, **settings_kw):
+        relevant=("textkit.py",), summarizer=None, fixer=None, timeout_s=0, clock=None,
+        **settings_kw):
     tools = make_search_tools(repo)
     deps = Deps(
         settings=Settings(_env_file=None, max_attempts=max_attempts, **settings_kw),
@@ -129,13 +133,15 @@ def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET
         summarizer=summarizer or RunnableLambda(
             lambda _m: ExploreResult(relevant_files=list(relevant), hypothesis="off by one")
         ),
-        fixer=scripted(proposals),
+        fixer=fixer or scripted(proposals),
         repro_writer=scripted(repros),
     )
     state = {"issue_title": "t", "issue_body": "b"}
     if targets:
         state["target_tests"] = list(targets)
-    return build_graph(deps).invoke(state)
+    return run_graph(
+        build_graph(deps), state, {}, timeout_s=timeout_s, clock=clock or time.monotonic
+    )
 
 
 def test_explorer_gets_a_second_chance_when_its_paths_do_not_exist(repo):
@@ -152,6 +158,59 @@ def test_explorer_error_names_the_files_it_invented(repo):
     summarizer = scripted([ExploreResult(relevant_files=["a/x.py"], hypothesis="a")] * 2)
     final = run(repo, FakeSandbox(target=[1], suites=[BASE]), [], summarizer=summarizer)
     assert "explorer did not identify" in final["error"] and "a/x.py" in final["error"]
+
+
+def test_run_stops_when_over_the_time_limit(repo):
+    ticks = iter(range(0, 100_000, 500))
+    sandbox = FakeSandbox(target=[1, 1, 1, 1], suites=[BASE])
+    final = run(repo, sandbox, [proposal(GOOD)] * 3, timeout_s=600, clock=lambda: next(ticks))
+    assert "time limit" in final["error"]
+    assert final.get("attempts", 0) < 3
+
+
+def test_progress_is_reported_per_step(repo):
+    seen: list[str] = []
+    tools = make_search_tools(repo)
+    deps = Deps(
+        settings=Settings(_env_file=None),
+        sandbox=FakeSandbox(target=[1, 0], suites=[BASE, CLEAN]),
+        info=ProjectInfo(True, test_command=["python", "-m", "pytest"]),
+        workdir=repo,
+        tools=tools,
+        explorer=scripted([AIMessage(content="done")]),
+        summarizer=RunnableLambda(
+            lambda _m: ExploreResult(relevant_files=["textkit.py"], hypothesis="h")
+        ),
+        fixer=scripted([proposal(GOOD)]),
+        repro_writer=scripted([]),
+    )
+    run_graph(
+        build_graph(deps),
+        {"issue_title": "t", "issue_body": "b", "target_tests": [TARGET]},
+        {},
+        progress=seen.append,
+    )
+    assert [s.split()[1] for s in seen] == ["setup", "explore", "reproduce", "fix", "verify"]
+
+
+def test_fixer_prompt_lists_the_repository_files(repo):
+    seen: list[str] = []
+    queue = [proposal(GOOD)]
+
+    def fixer_step(messages):
+        seen.append(messages[1].content)
+        return queue.pop(0)
+
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    run(repo, sandbox, [], fixer=RunnableLambda(fixer_step))
+    assert "textkit.py" in seen[0].split("## Repository files", 1)[1]
+
+
+def test_asking_for_nothing_gets_a_message_that_explains_why(repo):
+    ask = FixProposal(reasoning="let me look at the grouping module", edits=[])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [ask, proposal(GOOD)])
+    assert "cannot run tools" in final["history"][0]["feedback"]
 
 
 # ---------- user-supplied failing test ----------

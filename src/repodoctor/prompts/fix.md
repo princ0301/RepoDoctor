@@ -16,5 +16,8 @@ Rules:
   correct edit because you need to see another file, leave `edits` empty and list its path
   in `need_more_files`; it will be added to your next attempt. Never answer with a plan such
   as "let me read X".
+- Thinking aloud about reading a file achieves nothing: you cannot open anything that is not
+  shown. Either write edits, or request files in `need_more_files` using exact paths from
+  "Repository files".
 - A file marked NOT SHOWN was left out for space. If you need it, list it in
   `need_more_files`; requested files are shown first on the next attempt.

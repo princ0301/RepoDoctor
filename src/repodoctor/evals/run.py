@@ -12,8 +12,11 @@ from repodoctor.evals.cases import EvalCase, changed_files
 from repodoctor.evals.grade import grade_tree
 from repodoctor.runner import run_fix_issue
 
-
 _PATCH_KINDS = (
+    ("paths in need_more_files do not exist", "asked_for_unknown_file"),
+    ("Moved to the top", "asked_for_files"),
+    ("already shown to you", "asked_for_shown_file"),
+    ("Not shown because of the context budget", "budget_cut"),
     ("No edits were proposed", "no_edits"),
     ("not valid structured output", "malformed_output"),
     ("protected test file", "edits_test_file"),
@@ -64,6 +67,8 @@ class CaseResult:
     relevant_files: list[str] = field(default_factory=list)
     hypothesis: str = ""
     llm_calls: int = 0
+    slowest_calls: list[dict] = field(default_factory=list)
+    failed_calls: int = 0
     timings: dict = field(default_factory=dict)
     context_omitted: list[str] = field(default_factory=list)
     explored_files: list[str] = field(default_factory=list)
@@ -89,6 +94,8 @@ def _slim_history(history: list[dict]) -> list[dict]:
 def classify(final: dict, grade: dict | None) -> str:
     err = final.get("error")
     if err:
+        if err.startswith("The run exceeded"):
+            return "run_timeout"
         if err.startswith("Could not write a test"):
             return "no_repro"
         if "model failed" in err:
@@ -115,7 +122,12 @@ def _detail(outcome: str, final: dict, grade: dict | None) -> str:
 
 
 def run_case(
-    case: EvalCase, trial: int, settings: Settings, *, label: str
+    case: EvalCase,
+    trial: int,
+    settings: Settings,
+    *,
+    label: str,
+    progress: Callable[[str], None] | None = None,
 ) -> CaseResult:
     started = time.monotonic()
 
@@ -128,6 +140,7 @@ def run_case(
         final, _ = run_fix_issue(
             case.ref, settings, replay=True, targets=[], fix_pr=case.fix_pr, post=post,
             extra_tags=["eval", f"eval:{label}", f"case:{case.id}", f"trial:{trial}"],
+            progress=progress,
         )
     except Exception as e:  # one broken case must not stop the whole batch
         return CaseResult(
@@ -156,6 +169,8 @@ def run_case(
         relevant_files=final.get("relevant_files", []),
         hypothesis=(final.get("hypothesis") or "")[:600],
         llm_calls=final.get("llm_calls", 0),
+        slowest_calls=sorted(final.get("llm_timeline", []), key=lambda c: -c["seconds"])[:3],
+        failed_calls=sum(1 for c in final.get("llm_timeline", []) if not c["ok"]),
         timings=final.get("timings", {}),
         context_omitted=final.get("context_omitted", []),
         explored_files=final.get("explored_files", []),
@@ -183,11 +198,15 @@ def run_eval(
             if (case.id, trial) in done:
                 continue
             log(f"Running {case.id} (trial {trial}/{trials}) ...")
-            r = run_case(case, trial, settings, label=label)
+            r = run_case(case, trial, settings, label=label, progress=log)
             results.append(r)
             with results_file.open("a", encoding="utf-8") as f:   # crash-safe
                 f.write(json.dumps(asdict(r)) + "\n")
-            log(f"  -> {r.outcome} in {r.seconds:.0f}s, {r.llm_calls} calls {r.detail}".rstrip())
+            slow = max((c["seconds"] for c in r.slowest_calls), default=0)
+            log(
+                f"  -> {r.outcome} in {r.seconds:.0f}s, {r.llm_calls} calls "
+                f"(slowest {slow:.0f}s) {r.detail}".rstrip()
+            )
             consecutive_model_errors = (
                 consecutive_model_errors + 1 if r.outcome == "model_error" else 0
             )
@@ -210,7 +229,9 @@ def load_results(path: Path) -> list[CaseResult]:
     return list(latest.values())
 
 
-def summarize(results: list[CaseResult]) -> str:
+def summarize(
+    results: list[CaseResult], scope_ids: set[str] | frozenset[str] = frozenset()
+) -> str:
     if not results:
         return "No results."
     n = len(results)
@@ -248,6 +269,21 @@ def summarize(results: list[CaseResult]) -> str:
         parts = [f"{k}={v / n:.0f}s" for k, v in node_time.most_common()]
         parts.append(f"other={other / n:.0f}s")
         lines.append("Mean time by step:  " + ", ".join(parts))
+    scope = [r for r in results if r.case_id in scope_ids]
+    if scope:
+        core = [r for r in results if r.case_id not in scope_ids]
+        lines.append(
+            f"  without scope cases: {sum(r.resolved for r in core)}/{len(core)}   "
+            f"scope cases only: {sum(r.resolved for r in scope)}/{len(scope)}"
+        )
+    worst = max(
+        (c for r in results for c in r.slowest_calls), key=lambda c: c["seconds"], default=None
+    )
+    if worst:
+        lines.append(f"Slowest model call: {worst['seconds']:.0f}s ({worst['model']})")
+    failed_calls = sum(r.failed_calls for r in results)
+    if failed_calls:
+        lines.append(f"Failed model calls: {failed_calls} (retried or sent to a fallback)")
     secs = sorted(r.seconds for r in results)
     lines.append(f"Median time:        {secs[len(secs) // 2]:.0f}s per run")
     lines.append(f"Mean time:          {sum(r.seconds for r in results) / n:.0f}s per run")

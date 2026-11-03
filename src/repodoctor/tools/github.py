@@ -101,6 +101,20 @@ def fetch_pr_text(client: httpx.Client, ref: IssueRef, number: int) -> tuple[str
     return pr.get("title", ""), pr.get("body") or ""
 
 
+def fetch_file_text(client: httpx.Client, ref: IssueRef, path: str, sha: str) -> str:
+    try:
+        r = client.get(
+            f"/repos/{ref.full_name}/contents/{path}",
+            params={"ref": sha},
+            headers={"Accept": "application/vnd.github.raw+json"},
+        )
+    except httpx.HTTPError as e:
+        raise GitHubError(f"GitHub request failed: {type(e).__name__}: {e}") from e
+    if r.status_code >= 400:
+        raise GitHubError(f"could not fetch {path} at {sha[:10]} (HTTP {r.status_code})")
+    return r.text
+
+
 def _head(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "\n[... truncated ...]"
 
@@ -213,6 +227,7 @@ def fetch_pr(client: httpx.Client, ref: IssueRef, number: int) -> FixingPR:
 class PRFile:
     path: str
     status: str   # added | modified | removed | renamed | ...
+    patch: str = ""
 
 
 def list_pr_files(client: httpx.Client, ref: IssueRef, number: int) -> list[PRFile]:
@@ -221,7 +236,7 @@ def list_pr_files(client: httpx.Client, ref: IssueRef, number: int) -> list[PRFi
         batch = _get(
             client, f"/repos/{ref.full_name}/pulls/{number}/files", per_page=100, page=page
         )
-        files += [PRFile(f["filename"], f.get("status", "")) for f in batch]
+        files += [PRFile(f["filename"], f.get("status", ""), f.get("patch") or "") for f in batch]
         if len(batch) < 100:
             break
     return files

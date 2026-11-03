@@ -1,5 +1,6 @@
 """Wires everything together: workspace -> sandbox -> models -> graph -> final state."""
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,17 +21,16 @@ from repodoctor.tools.github import (
 from repodoctor.tools.issue_ref import IssueRef
 from repodoctor.tools.policy import policy_mentions
 from repodoctor.tools.repo import (
+    ProjectInfo,
     checkout_commit,
     clone_issue_repo,
     clone_repo,
     detect_project,
     get_diff_since,
-    ProjectInfo,
     remove_dir,
 )
 from repodoctor.tools.sandbox import Sandbox, ensure_image
 from repodoctor.tracing import CallCounter, run_config
-
 
 PostHook = Callable[[Sandbox, ProjectInfo, Path, dict], dict | None]
 
@@ -63,6 +63,34 @@ def parse_issue_file(text: str) -> tuple[str, str]:
     return lines[0].lstrip("#").strip(), "\n".join(lines[1:]).strip()
 
 
+def run_graph(
+    graph, initial: dict, config: dict, *,
+    timeout_s: int = 0,
+    progress: Callable[[str], None] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> dict:
+    """Run the graph step by step: report progress, stop once the time limit is passed.
+
+    The limit is checked between steps; a single model call in flight cannot be interrupted.
+    """
+    started = clock()
+    final = dict(initial)
+    last = "start"
+    for step in graph.stream(initial, config=config, stream_mode="updates"):
+        for node, update in step.items():
+            final.update(update or {})
+            last = node
+            if progress:
+                progress(f"  [{clock() - started:4.0f}s] {node} finished")
+        if timeout_s and clock() - started > timeout_s and not final.get("success"):
+            final["error"] = (
+                f"The run exceeded the time limit of {timeout_s}s "
+                f"and was stopped after the {last} step."
+            )
+            break
+    return final
+
+
 def prepare_workdir(src: Path, settings: Settings) -> Path:
     """Copy a local repo into the work dir. The agent never touches your original."""
     src = src.resolve()
@@ -86,6 +114,7 @@ def execute(
     tags: list[str],
     metadata: dict,
     post: PostHook | None = None,
+    progress: Callable[[str], None] | None = None,
 ) -> dict:
     info = detect_project(workdir)
     if not info.supported:
@@ -120,8 +149,12 @@ def execute(
         if targets:
             initial["target_tests"] = list(targets)
 
-        final = build_graph(deps).invoke(initial, config=config)
+        final = run_graph(
+            build_graph(deps), initial, config,
+            timeout_s=settings.run_timeout_s, progress=progress,
+        )
         final["llm_calls"] = counter.calls
+        final["llm_timeline"] = counter.timeline
         if final.get("success") and final.get("base_sha"):
             final["full_diff"] = get_diff_since(workdir, final["base_sha"])
         if post is not None:  # runs while the sandbox is still up (used by the evals)
@@ -129,7 +162,9 @@ def execute(
         return final
 
 
-def run_fix(req: FixRequest, settings: Settings) -> dict:
+def run_fix(
+    req: FixRequest, settings: Settings, *, progress: Callable[[str], None] | None = None
+) -> dict:
     """Local mode: a repo directory plus an issue file."""
     workdir = prepare_workdir(req.repo_dir, settings)
     return execute(
@@ -137,6 +172,7 @@ def run_fix(req: FixRequest, settings: Settings) -> dict:
         run_name=f"fix:{req.repo_dir.name}",
         tags=["local"],
         metadata={"repo": req.repo_dir.name},
+        progress=progress,
     )
 
 
@@ -150,6 +186,7 @@ def run_fix_issue(
     post: PostHook | None = None,
     extra_tags: list[str] | None = None,
     log: Callable[[str], None] = lambda _msg: None,
+    progress: Callable[[str], None] | None = None,
 ) -> tuple[dict, IntakeInfo]:
     """GitHub mode: fetch the issue, clone the repo, run the loop. Nothing is pushed."""
     with github_client(settings.github_token) as client:
@@ -192,5 +229,6 @@ def run_fix_issue(
         tags=["github-replay" if pr else "github", *(extra_tags or [])],
         metadata={"repo": ref.full_name, "issue": ref.number, "replay": replay},
         post=post,
+        progress=progress,
     )
     return final, IntakeInfo(issue.state, pr.url if pr else None, hits)

@@ -70,6 +70,11 @@ def changed_files(diff: str) -> list[str]:
     return seen
 
 
+def removed_line_count(patch: str) -> int:
+    """Lines a diff hunk removes (blank ones ignored): existing code that was changed or deleted."""
+    return sum(1 for ln in patch.splitlines() if ln.startswith("-") and ln[1:].strip())
+
+
 def save_cases(path: Path, cases: list[EvalCase]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps([asdict(c) for c in cases], indent=2) + "\n", encoding="utf-8")
@@ -86,3 +91,12 @@ def save_specs(path: Path, specs: list[CaseSpec]) -> None:
 
 def load_specs(path: Path) -> list[CaseSpec]:
     return [CaseSpec(**d) for d in json.loads(path.read_text(encoding="utf-8"))]
+
+def parse_case_flags(text: str) -> dict[str, str]:
+    """Lines like '<case id>  [spec]  # reason' -> {id: 'spec'}. Untagged means spec."""
+    flags: dict[str, str] = {}
+    for line in text.splitlines():
+        body = line.split("#", 1)[0].split()
+        if body:
+            flags[body[0]] = body[1].strip("[]").lower() if len(body) > 1 else "spec"
+    return flags

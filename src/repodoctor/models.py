@@ -54,7 +54,7 @@ def make_chat_model(spec: str, settings: Settings) -> BaseChatModel:
         base_url=base_url,
         api_key=key,
         temperature=0,
-        max_retries=2,
+        max_retries=settings.llm_max_retries,
         timeout=settings.llm_timeout_s,
     )
 

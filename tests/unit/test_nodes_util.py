@@ -1,4 +1,15 @@
-from repodoctor.nodes.util import existing_files, render_files
+from repodoctor.nodes.util import existing_files, render_files, repo_file_list
+
+
+def test_repo_file_list_puts_source_before_tests(make_git_repo):
+    root = make_git_repo({"pkg/a.py": "x\n", "tests/test_a.py": "x\n", "README.md": "x\n"})
+    assert repo_file_list(root) == "pkg/a.py\ntests/test_a.py"
+
+
+def test_repo_file_list_is_capped(make_git_repo):
+    root = make_git_repo({f"m{i}.py": "x\n" for i in range(10)})
+    out = repo_file_list(root, max_files=3)
+    assert "m0.py" in out and "m3.py" not in out and "7 more" in out
 
 
 def test_existing_files_accepts_a_unique_suffix(make_git_repo):

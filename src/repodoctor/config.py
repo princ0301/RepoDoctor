@@ -22,12 +22,14 @@ class Settings(BaseSettings):
     llm_fix: str = "openrouter:nvidia/nemotron-3.5-super-vl:free"
     llm_fallbacks: str = ""
     llm_timeout_s: int = 120
+    llm_max_retries: int = 2
 
     # --- Agent limits ---
     max_attempts: int = 3          # fix/verify retries
     explore_max_steps: int = 10    # tool-call rounds in the explorer
     repro_max_attempts: int = 3    # tries to write a valid reproduction test
     fix_context_chars: int = 240_000
+    run_timeout_s: int = 900       # set RUN_TIMEOUT_S=0 to disable; checked between graph steps
 
     # --- Sandbox ---
     sandbox_timeout_s: int = 300

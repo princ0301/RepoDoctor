@@ -15,10 +15,13 @@ from repodoctor.evals.cases import (
     is_test_path,
     load_cases,
     load_specs,
+    parse_case_flags,
+    removed_line_count,
     save_cases,
     save_specs,
 )
 from repodoctor.evals.discover import discover
+from repodoctor.evals.gold import gold_test_source
 from repodoctor.evals.grade import grade_tree
 from repodoctor.evals.run import (
     CaseResult,
@@ -28,7 +31,8 @@ from repodoctor.evals.run import (
     run_eval,
     summarize,
 )
-from repodoctor.tools.github import PRFile, github_client
+from repodoctor.tools.github import PRFile, fetch_file_text, github_client
+from repodoctor.tools.issue_ref import IssueRef
 from repodoctor.tools.repo import ProjectInfo, clone_repo, fetch_pull_head, head_sha, run_git
 from repodoctor.tools.sandbox import ExecResult
 
@@ -48,6 +52,55 @@ def test_feature_signals():
     assert "PR title" in feature_signals([], "Add option to truncate")[0]
 
 
+def test_parse_case_flags():
+    text = "# header [spec]\na__b-1  [spec]  # why\nc__d-2 [scope]\ne__f-3  # untagged\n\n"
+    assert parse_case_flags(text) == {"a__b-1": "spec", "c__d-2": "scope", "e__f-3": "spec"}
+
+
+def test_removed_line_count():
+    patch = "@@ -1,3 +1,3 @@\n a\n-b\n+c\n-\n-  \n--- weird\n\\ No newline at end of file"
+    assert removed_line_count(patch) == 2
+
+
+def test_summarize_splits_scope_cases():
+    out = summarize([result("a"), result("b", outcome="wrong_fix")], scope_ids={"b"})
+    assert "without scope cases: 1/1" in out and "scope cases only: 0/1" in out
+
+
+GOLD_SRC = '''
+import pytest
+
+
+def test_top():
+    assert 1
+
+
+class TestA:
+    @pytest.mark.parametrize("x", [1, 2])
+    def test_method(self, x):
+        assert x
+'''
+
+
+def test_gold_test_source_finds_functions_and_methods():
+    texts = {"tests/test_a.py": GOLD_SRC}
+    path, src = gold_test_source("tests.test_a::test_top", texts)
+    assert path == "tests/test_a.py" and "def test_top" in src
+    _, src = gold_test_source("tests.test_a.TestA::test_method[1]", texts)
+    assert "@pytest.mark.parametrize" in src and "def test_method" in src
+    assert gold_test_source("tests.test_a::missing", texts) is None
+    assert gold_test_source("tests.other::test_top", texts) is None
+
+
+def test_fetch_file_text_returns_raw_text():
+    def handler(request):
+        assert request.url.params["ref"] == "abc"
+        return httpx.Response(200, text="print('hi')\n")
+
+    c = github_client("", transport=httpx.MockTransport(handler))
+    assert fetch_file_text(c, IssueRef("o", "r", 1), "tests/t.py", "abc") == "print('hi')\n"
+
+
 @pytest.mark.parametrize(
     "feedback, kind",
     [
@@ -55,6 +108,26 @@ def test_feature_signals():
         (
             "Your edits could not be applied:\nNo edits were proposed. You must return",
             "no_edits",
+        ),
+        (
+            "Your edits could not be applied:\nNo edits were proposed. "
+            "Moved to the top of your context: a.py.",
+            "asked_for_files",
+        ),
+        (
+            "Your edits could not be applied:\nNo edits were proposed. "
+            "These files are already shown to you in full, use them: a.py.",
+            "asked_for_shown_file",
+        ),
+        (
+            "Your edits could not be applied:\nNo edits were proposed. "
+            "Not shown because of the context budget: b.py.",
+            "budget_cut",
+        ),
+        (
+            "Your edits could not be applied:\nNo edits were proposed. "
+            "These paths in need_more_files do not exist: x.py.",
+            "asked_for_unknown_file",
         ),
         (
             "Your edits could not be applied:\nedit 1 (a.py): 'old' text not found. It",
@@ -161,6 +234,14 @@ def test_cases_and_specs_round_trip(tmp_path):
         ({"error": "Could not write a test that reproduces the issue after 3"}, None, "no_repro"),
         ({"error": "The fix model failed on attempt 1: boom"}, None, "model_error"),
         (
+            {
+                "error": "The run exceeded the time limit of 900s "
+                "and was stopped after the fix step."
+            },
+            None,
+            "run_timeout",
+        ),
+        (
             {"error": "The explorer did not identify any existing source file (it named: a.py)."},
             None,
             "explore_failed",
@@ -211,7 +292,7 @@ def test_pair_problem():
 def test_run_eval_stops_after_consecutive_model_errors(tmp_path, monkeypatch):
     ran = []
 
-    def fake(c, trial, settings, *, label):
+    def fake(c, trial, settings, *, label, progress=None):
         ran.append(c.id)
         return result(c.id, trial, "model_error", success=False)
 
@@ -225,7 +306,7 @@ def test_run_eval_stops_after_consecutive_model_errors(tmp_path, monkeypatch):
 def test_run_eval_skips_finished_runs(tmp_path, monkeypatch):
     ran = []
 
-    def fake(c, trial, settings, *, label):
+    def fake(c, trial, settings, *, label, progress=None):
         ran.append((c.id, trial))
         return result(c.id, trial)
 
@@ -314,7 +395,9 @@ INFO = ProjectInfo(True, test_command=["python", "-m", "pytest"])
 
 def test_grade_resolved_when_gold_tests_pass(gold):
     work, c = gold
-    sandbox = FakeOutcomes({"tests.test_gold::test_a": "passed", "tests.test_gold::test_b": "passed"})
+    sandbox = FakeOutcomes(
+        {"tests.test_gold::test_a": "passed", "tests.test_gold::test_b": "passed"}
+    )
     g = grade_tree(sandbox, INFO, work, c, 60)
     assert g.resolved and sandbox.args == ["tests/test_gold.py"]
     assert (work / "tests" / "test_gold.py").exists()   # the gold test was copied in
@@ -322,7 +405,9 @@ def test_grade_resolved_when_gold_tests_pass(gold):
 
 def test_grade_unresolved_names_the_failing_tests(gold):
     work, c = gold
-    sandbox = FakeOutcomes({"tests.test_gold::test_a": "failed", "tests.test_gold::test_b": "passed"})
+    sandbox = FakeOutcomes(
+        {"tests.test_gold::test_a": "failed", "tests.test_gold::test_b": "passed"}
+    )
     g = grade_tree(sandbox, INFO, work, c, 60)
     assert not g.resolved and g.f2p_failed == ["tests.test_gold::test_a"] and not g.p2p_broken
 

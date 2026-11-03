@@ -29,6 +29,29 @@ def _tracked_files(root: Path) -> list[str]:
         return []
 
 
+def repo_file_list(root: Path, max_files: int = 200, max_chars: int = 6000) -> str:
+    """Tracked Python files (source first, tests last), so a model can name real paths."""
+
+    def is_test(f: str) -> bool:
+        parts = f.split("/")
+        return "tests" in parts[:-1] or "test" in parts[:-1] or parts[-1].startswith("test_")
+
+    files = sorted(
+        (f for f in _tracked_files(root) if f.endswith(".py")), key=lambda f: (is_test(f), f)
+    )
+    shown: list[str] = []
+    used = 0
+    for f in files[:max_files]:
+        if used + len(f) + 1 > max_chars:
+            break
+        shown.append(f)
+        used += len(f) + 1
+    text = "\n".join(shown)
+    if len(shown) < len(files):
+        text += f"\n[... {len(files) - len(shown)} more Python files not listed ...]"
+    return text
+
+
 def existing_files(root: Path, paths: list[str], limit: int = 5) -> list[str]:
     """Paths that exist inside the repo, normalized and de-duplicated.
 

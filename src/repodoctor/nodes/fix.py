@@ -5,7 +5,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 
 from repodoctor.deps import Deps
-from repodoctor.nodes.util import clip, existing_files, is_malformed_output, render_files
+from repodoctor.nodes.util import (
+    clip,
+    existing_files,
+    is_malformed_output,
+    render_files,
+    repo_file_list,
+)
 from repodoctor.prompts import load_prompt
 from repodoctor.schemas import Edit
 from repodoctor.state import RepoDoctorState
@@ -58,6 +64,7 @@ def _fix_request(state: RepoDoctorState, root: Path, budget: int) -> tuple[str, 
         f"## Investigation notes\n{state.get('hypothesis', '')}",
         "## Test file(s) (read-only, do not edit)\n" + tests_text,
         "## Source files you may edit\n" + source_text,
+        "## Repository files (use exact paths in need_more_files)\n" + repo_file_list(root),
     ]
     if state.get("history"):
         sections.append("## Previous attempts\n" + _history_text(state["history"]))
@@ -81,7 +88,9 @@ def _apply(root: Path, edits: list[Edit], protected: set[str]) -> PatchResult:
     return apply_edits(root, edits)
 
 
-def _no_edits_message(wanted: list[str], shown: list[str], omitted: list[str]) -> str:
+def _no_edits_message(
+    wanted: list[str], shown: list[str], omitted: list[str], unknown: list[str]
+) -> str:
     parts = ["No edits were proposed."]
     if shown:
         parts.append(
@@ -92,16 +101,21 @@ def _no_edits_message(wanted: list[str], shown: list[str], omitted: list[str]) -
         parts.append(
             f"Moved to the top of your context for the next attempt: {', '.join(promoted)}."
         )
+    if unknown:
+        parts.append(
+            f"These paths in need_more_files do not exist: {', '.join(unknown)}. "
+            "Use paths exactly as listed under 'Repository files'."
+        )
     if omitted and not wanted:
         parts.append(
             f"Not shown because of the context budget: {', '.join(omitted)}. List what you "
             "need in need_more_files, or write edits with what you have."
         )
     if len(parts) == 1:
-        return (
-            " ".join(parts)
-            + " You must return edits. If you need to see another file, list its path in "
-            "need_more_files."
+        parts.append(
+            "Saying that you want to look at something does nothing: you cannot run tools "
+            "or open files. Either list exact paths from 'Repository files' in "
+            "need_more_files, or write your best edits now from the files shown."
         )
     return " ".join(parts)
 
@@ -140,8 +154,11 @@ def make_fix(deps: Deps):
         if not proposal.edits:
             wanted = existing_files(root, proposal.need_more_files)
             shown = [f for f in wanted if f in relevant and f not in omitted]
+            unknown = [
+                r for r in proposal.need_more_files if r.strip() and not existing_files(root, [r])
+            ]
             relevant = [*wanted, *(f for f in relevant if f not in wanted)][:MAX_CONTEXT_FILES]
-            errors = [_no_edits_message(wanted, shown, omitted)]
+            errors = [_no_edits_message(wanted, shown, omitted, unknown)]
 
         diff = get_diff(root, result.changed_files) if result.ok else ""
         if result.ok and not diff.strip():
