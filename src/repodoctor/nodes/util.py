@@ -5,7 +5,7 @@ from pydantic import ValidationError
 
 from repodoctor.tools.paths import safe_resolve
 from repodoctor.tools.repo import GitError, run_git
-from repodoctor.tools.search import SearchError, read_raw
+from repodoctor.tools.search import SearchError, grep, read_raw
 
 
 def clip(text: str, limit: int, *, tail: bool = False) -> str:
@@ -63,6 +63,25 @@ def test_file_of(root: Path, test_id: str) -> str | None:
 
 
 test_file_of.__test__ = False  # prevent pytest from collecting this public helper when imported
+
+
+def similar_sites(root: Path, pattern: str, files: list[str], limit: int = 30) -> list[str]:
+    """'file:line: text' lines in `files` matching the model's pattern for the flawed code.
+
+    An empty, invalid or too broad pattern (more than `limit` matches in a file) yields nothing.
+    """
+    if not pattern.strip():
+        return []
+    sites: list[str] = []
+    for f in files:
+        try:
+            result = grep(root, pattern, path=f, max_results=limit)
+        except SearchError:
+            return []
+        if result.truncated:
+            return []
+        sites += [f"{h.path}:{h.line}: {h.text.strip()}" for h in result.hits]
+    return sites[:limit]
 
 
 def existing_files(root: Path, paths: list[str], limit: int = 5) -> list[str]:

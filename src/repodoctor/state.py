@@ -21,6 +21,8 @@ class RepoDoctorState(TypedDict, total=False):
     relevant_files: list[str]
     explored_files: list[str]
     hypothesis: str
+    similar_sites: list[str]
+    explore_trace: list[str]
 
     # fix/verify loop
     attempts: int

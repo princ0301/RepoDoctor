@@ -64,6 +64,16 @@ def _fix_request(state: RepoDoctorState, root: Path, budget: int) -> tuple[str, 
         + clip(state.get("target_failure", ""), 3000, tail=True)
         + "\n```",
         f"## Investigation notes\n{state.get('hypothesis', '')}",
+    ]
+    if state.get("similar_sites"):
+        sections.append(
+            "## Other places with the same pattern\n"
+            "These lines match the pattern of the flaw. If the same flaw causes the same bug "
+            "at some of them, fix those too, not only the reported place. Say in `reasoning` "
+            "which you changed and which you deliberately left alone.\n"
+            + "\n".join(state["similar_sites"])
+        )
+    sections += [
         "## Test file(s) (read-only, do not edit)\n" + tests_text,
         "## Source files you may edit\n" + source_text,
         "## Repository files (use exact paths in need_more_files)\n" + repo_file_list(root),
@@ -72,7 +82,6 @@ def _fix_request(state: RepoDoctorState, root: Path, budget: int) -> tuple[str, 
         sections.append("## Previous attempts\n" + _history_text(state["history"]))
     sections.append("Return your edits.")
     return "\n\n".join(sections), omitted
-
 
 def _apply(root: Path, edits: list[Edit], protected: set[str]) -> PatchResult:
     if not edits:

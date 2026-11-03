@@ -720,6 +720,10 @@ def eval_report(
         if r.explored_files and r.relevant_files != r.explored_files:
             typer.echo(f"Fixer's context at the end: {', '.join(r.relevant_files)}")
         typer.echo(f"Hypothesis: {r.hypothesis or '-'}\n")
+        if r.similar_sites:
+            typer.echo("Similar sites found: " + "; ".join(r.similar_sites[:8]))
+        if r.outcome == "explore_failed":
+            typer.echo("Explorer tool calls:\n  " + "\n  ".join(r.explore_trace or ["-"]))
         typer.echo(f"Time by step: {r.timings or '-'}")
         typer.echo(f"Slowest model calls: {r.slowest_calls or '-'}")
         if r.context_omitted:

@@ -2,6 +2,7 @@ import re
 
 from pydantic import BaseModel, Field, field_validator
 
+
 class Edit(BaseModel):
     """One exact search/replace edit to a file in the repo."""
 
@@ -18,6 +19,18 @@ class ExploreResult(BaseModel):
         "likely need to change, most important first. Only files you have actually seen."
     )
     hypothesis: str = Field(description="2-4 sentences on the root cause of the bug")
+    pattern: str = Field(
+        default="",
+        description="Only if the bug comes from a code pattern that may repeat elsewhere in "
+        "those files (similar setters, parallel branches, sibling functions): a POSIX "
+        "extended regular expression, matching single lines, that finds the flawed code. "
+        "Empty otherwise.",
+    )
+
+    @field_validator("pattern", mode="before")
+    @classmethod
+    def _none_is_empty(cls, v):
+        return "" if v is None else v
 
 
 class FixProposal(BaseModel):

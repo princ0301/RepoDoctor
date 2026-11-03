@@ -103,6 +103,13 @@ def _repro_request(
         parts.append(
             f"## An existing test file, for style and imports ({style[0]})\n```\n{style[1]}\n```"
         )
+    if state.get("similar_sites"):
+        parts.append(
+            "## Other places with the same pattern\n"
+            "If the same flaw can be triggered through these, cover each distinct one with "
+            "its own case in the test (for example with pytest.mark.parametrize).\n"
+            + "\n".join(state["similar_sites"])
+        )
     parts.append(
         f"## Output\nWrite the complete contents of a NEW test file saved as `{rel}`, "
         "with one focused test function."

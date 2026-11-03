@@ -5,7 +5,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
 from repodoctor.deps import Deps
-from repodoctor.nodes.util import clip, existing_files
+from repodoctor.nodes.util import clip, existing_files, similar_sites
 from repodoctor.prompts import load_prompt
 from repodoctor.state import RepoDoctorState
 
@@ -16,7 +16,11 @@ SUMMARY_REQUEST = (
     "- relevant_files: up to 5 source files (paths relative to the repository root, "
     "exactly as the tools showed them) that most likely need to change, most important "
     "first. Only files you have actually seen.\n"
-    "- hypothesis: 2-4 sentences explaining the root cause of the bug."
+    "- hypothesis: 2-4 sentences explaining the root cause of the bug.\n"
+    "- pattern: only if the flaw is a code pattern that may repeat in those files (for "
+    "example several similar setters or parallel branches): a POSIX extended regular "
+    "expression matching single lines of the flawed code, so that every similar place can "
+    "be found. Leave it empty otherwise."
 )
 
 
@@ -46,6 +50,12 @@ def _run_tool(tools: dict[str, BaseTool], call: dict) -> str:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
+def _trace_line(call: dict, result: str) -> str:
+    args = ", ".join(f"{k}={str(v)[:40]!r}" for k, v in (call.get("args") or {}).items())
+    lines = result.strip().splitlines()
+    return f"{call['name']}({args}) -> {lines[0][:80] if lines else ''}"
+
+
 def _summary_text(result) -> str:
     named = ", ".join(result.relevant_files) or "(none)"
     return f"relevant_files: {named}\nhypothesis: {result.hypothesis}"
@@ -67,6 +77,7 @@ def make_explore(deps: Deps):
     def explore(state: RepoDoctorState, config: RunnableConfig) -> dict:
         messages: list = [SystemMessage(system), HumanMessage(_explore_request(state))]
         read_paths: Counter[str] = Counter()
+        trace: list[str] = []
         try:
             for _ in range(deps.settings.explore_max_steps):
                 ai = deps.explorer.invoke(messages, config)
@@ -74,13 +85,15 @@ def make_explore(deps: Deps):
                 if not ai.tool_calls:
                     break
                 for i, call in enumerate(ai.tool_calls):
+                    output = _run_tool(tools, call)
+                    trace.append(_trace_line(call, output))
                     if call["name"] == "read_file":
                         path = (call.get("args") or {}).get("path")
                         if isinstance(path, str):
                             read_paths[path] += 1
                     messages.append(
                         ToolMessage(
-                            content=_run_tool(tools, call),
+                            content=output,
                             tool_call_id=call.get("id") or f"call_{i}",
                             name=call["name"],
                         )
@@ -94,7 +107,10 @@ def make_explore(deps: Deps):
                 result = deps.summarizer.invoke(messages, config)
                 files = existing_files(deps.workdir, result.relevant_files)
         except Exception as e:  # rate limits, auth, malformed output after fallbacks
-            return {"error": f"The explore model failed: {type(e).__name__}: {e}"}
+            return {
+                "error": f"The explore model failed: {type(e).__name__}: {e}",
+                "explore_trace": trace[-12:],
+            }
 
         hypothesis = result.hypothesis
         if not files:  # the model named nothing usable: fall back to what it actually read
@@ -105,8 +121,20 @@ def make_explore(deps: Deps):
             named = ", ".join(result.relevant_files) or "nothing"
             return {
                 "error": "The explorer did not identify any existing source file "
-                f"(it named: {named})."
+                f"(it named: {named}).",
+                "explore_trace": trace[-12:],
             }
-        return {"relevant_files": files, "explored_files": files, "hypothesis": hypothesis}
+        sites = (
+            similar_sites(deps.workdir, result.pattern, files)
+            if deps.settings.sweep_similar
+            else []
+        )
+        return {
+            "relevant_files": files,
+            "explored_files": files,
+            "hypothesis": hypothesis,
+            "similar_sites": sites,
+            "explore_trace": trace[-12:],
+        }
 
     return explore

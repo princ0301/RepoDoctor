@@ -137,11 +137,13 @@ def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET
         **settings_kw):
     tools = make_search_tools(repo)
     allow_test_updates = settings_kw.pop("allow_test_updates", False)
+    sweep_similar = settings_kw.pop("sweep_similar", True)
     deps = Deps(
         settings=Settings(
             _env_file=None,
             max_attempts=max_attempts,
             allow_test_updates=allow_test_updates,
+            sweep_similar=sweep_similar,
             **settings_kw,
         ),
         sandbox=sandbox,
@@ -303,6 +305,62 @@ def test_explorer_falls_back_to_the_files_it_read(repo):
     sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
     final = run(repo, sandbox, [proposal(GOOD)], explorer=explorer, summarizer=summarizer)
     assert final["success"] and final["relevant_files"] == ["textkit.py"]
+
+
+def _fixer_that_records(seen):
+    def step(messages):
+        seen.append(messages[1].content)
+        return proposal(GOOD)
+
+    return RunnableLambda(step)
+
+
+def _pattern_summarizer():
+    return RunnableLambda(lambda _m: ExploreResult(
+        relevant_files=["textkit.py"], hypothesis="h", pattern=r"len\(text\)"
+    ))
+
+
+def test_similar_sites_reach_the_fixer(repo):
+    seen: list[str] = []
+    run(
+        repo,
+        FakeSandbox(target=[1, 0], suites=[BASE, CLEAN]),
+        [],
+        fixer=_fixer_that_records(seen),
+        summarizer=_pattern_summarizer(),
+    )
+    assert "## Other places with the same pattern" in seen[0]
+    assert "textkit.py:2:" in seen[0]
+
+
+def test_the_sweep_can_be_switched_off(repo):
+    seen: list[str] = []
+    run(
+        repo,
+        FakeSandbox(target=[1, 0], suites=[BASE, CLEAN]),
+        [],
+        fixer=_fixer_that_records(seen),
+        summarizer=_pattern_summarizer(),
+        sweep_similar=False,
+    )
+    assert "Other places" not in seen[0]
+
+
+def test_the_explorers_tool_calls_are_recorded(repo):
+    explorer = scripted([
+        AIMessage(content="", tool_calls=[
+            {"name": "find_definition", "args": {"name": "truncate"}, "id": "c1"}
+        ]),
+        AIMessage(content="done"),
+    ])
+    final = run(
+        repo,
+        FakeSandbox(target=[1, 0], suites=[BASE, CLEAN]),
+        [proposal(GOOD)],
+        explorer=explorer,
+    )
+    assert final["explore_trace"][0].startswith("find_definition(name='truncate')")
 
 
 def test_refuses_to_edit_the_target_test(repo):

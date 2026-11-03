@@ -73,6 +73,8 @@ class CaseResult:
     context_omitted: list[str] = field(default_factory=list)
     explored_files: list[str] = field(default_factory=list)
     edited_tests: list[str] = field(default_factory=list)
+    similar_sites: list[str] = field(default_factory=list)
+    explore_trace: list[str] = field(default_factory=list)
 
 
 def _slim_history(history: list[dict]) -> list[dict]:
@@ -176,6 +178,8 @@ def run_case(
         context_omitted=final.get("context_omitted", []),
         explored_files=final.get("explored_files", []),
         edited_tests=final.get("edited_tests", []),
+        similar_sites=final.get("similar_sites", []),
+        explore_trace=final.get("explore_trace", []),
     )
 
 

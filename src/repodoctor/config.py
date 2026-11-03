@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     repro_max_attempts: int = 3    # tries to write a valid reproduction test
     fix_context_chars: int = 240_000
     run_timeout_s: int = 900       # set RUN_TIMEOUT_S=0 to disable; checked between graph steps
+    sweep_similar: bool = True
 
     # --- Sandbox ---
     sandbox_timeout_s: int = 300
