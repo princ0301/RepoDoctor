@@ -15,3 +15,4 @@ prettytable__prettytable-398     [scope]   # issue names only min_width; the PR 
 prettytable__prettytable-272     [scope]   # issue reports max_width; a test also needs float_format
 prettytable__prettytable-354     [scope]   # fields and sort_key share the root cause of the reported sortby
 pallets__click-2012              [scope]   # covers leftovers of an earlier partial fix
+andialbrecht__sqlparse-701       [spec]    # tests assert sql.Over, Function.get_window() and exact token positions the issue never mentions

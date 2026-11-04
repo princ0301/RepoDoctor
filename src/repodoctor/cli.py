@@ -607,6 +607,9 @@ def eval_run(
         None, "--rerun-failed",
         help="results.jsonl of an earlier run: only the cases with an unresolved run in it",
     ),
+    list_only: bool = typer.Option(
+        False, "--list", help="Only print the selected cases and the run count; run nothing"
+    ),
 ) -> None:
     """Run the agent on every case and grade it with the maintainers' tests."""
     if not cases_file.exists():
@@ -648,6 +651,13 @@ def eval_run(
     if not cases:
         typer.echo("ERROR   no cases selected")
         raise typer.Exit(1)
+    if list_only:
+        flags = _case_flags()
+        for c in cases:
+            tag = f"  [{flags[c.id]}]" if c.id in flags else ""
+            typer.echo(f"{c.id}{tag}")
+        typer.echo(f"{len(cases)} case(s) x {trials} trial(s) = {len(cases) * trials} runs")
+        return
 
     if resume:
         results_file = resume
