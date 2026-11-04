@@ -1,0 +1,37 @@
+{
+  "label": "heldout-final",
+  "trials": 3,
+  "split": "heldout",
+  "cases": [
+    "python-humanize__humanize-333",
+    "python-humanize__humanize-152",
+    "pallets__click-3822",
+    "pallets__click-2869",
+    "pallets__click-3571",
+    "pallets__click-3242",
+    "pallets__click-3487",
+    "pallets__click-2012",
+    "andialbrecht__sqlparse-601",
+    "andialbrecht__sqlparse-332",
+    "andialbrecht__sqlparse-773",
+    "andialbrecht__sqlparse-752",
+    "andialbrecht__sqlparse-763",
+    "andialbrecht__sqlparse-562",
+    "prettytable__prettytable-474",
+    "prettytable__prettytable-113",
+    "prettytable__prettytable-202",
+    "prettytable__prettytable-247",
+    "prettytable__prettytable-259"
+  ],
+  "llm_explore": "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b",
+  "llm_fix": "nvidia:nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "llm_fallbacks": [
+    "openrouter:nvidia/nemotron-3.5-super-vl:free"
+  ],
+  "max_attempts": 3,
+  "repro_max_attempts": 3,
+  "allow_test_updates": false,
+  "fix_context_chars": 240000,
+  "run_timeout_s": 900,
+  "repodoctor_commit": "08e446a"
+}
