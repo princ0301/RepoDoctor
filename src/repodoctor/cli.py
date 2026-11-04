@@ -55,6 +55,7 @@ from repodoctor.tools.repo import (
     clone_issue_repo,
     detect_project,
     remove_dir,
+    run_git,
 )
 from repodoctor.tools.sandbox import Sandbox, SandboxError, ensure_image, image_exists
 
@@ -66,6 +67,15 @@ app = typer.Typer(no_args_is_help=True, help="RepoDoctor: autonomous issue fixer
 RUN_ERRORS = (
     RunnerError, GitHubError, ModelConfigError, SandboxError, GitError, ValueError,
 )
+
+
+def _code_version() -> str:
+    try:
+        sha = run_git("rev-parse", "--short", "HEAD").strip()
+        dirty = bool(run_git("status", "--porcelain").strip())
+    except GitError:
+        return "unknown"
+    return sha + ("+uncommitted changes" if dirty else "")
 
 
 def _resolve_issue(url: str) -> IssueRef:
@@ -655,6 +665,10 @@ def eval_run(
                 "llm_fallbacks": settings.fallback_specs,
                 "max_attempts": settings.max_attempts,
                 "repro_max_attempts": settings.repro_max_attempts,
+                "allow_test_updates": settings.allow_test_updates,
+                "fix_context_chars": settings.fix_context_chars,
+                "run_timeout_s": settings.run_timeout_s,
+                "repodoctor_commit": _code_version(),
             }, indent=2),
             encoding="utf-8",
         )
@@ -720,8 +734,6 @@ def eval_report(
         if r.explored_files and r.relevant_files != r.explored_files:
             typer.echo(f"Fixer's context at the end: {', '.join(r.relevant_files)}")
         typer.echo(f"Hypothesis: {r.hypothesis or '-'}\n")
-        if r.similar_sites:
-            typer.echo("Similar sites found: " + "; ".join(r.similar_sites[:8]))
         if r.outcome == "explore_failed":
             typer.echo("Explorer tool calls:\n  " + "\n  ".join(r.explore_trace or ["-"]))
         typer.echo(f"Time by step: {r.timings or '-'}")

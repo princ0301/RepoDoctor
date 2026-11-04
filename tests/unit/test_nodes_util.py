@@ -1,4 +1,4 @@
-from repodoctor.nodes.util import existing_files, render_files, repo_file_list, test_file_of, similar_sites
+from repodoctor.nodes.util import existing_files, render_files, repo_file_list, test_file_of
 
 
 def test_repo_file_list_puts_source_before_tests(make_git_repo):
@@ -54,19 +54,3 @@ def test_test_file_of_maps_a_junit_id_to_its_file(tmp_path):
     assert test_file_of(tmp_path, "tests.test_a::test_m") == "tests/test_a.py"
     assert test_file_of(tmp_path, "other.mod::test_m") is None
 
-def test_similar_sites_finds_matching_lines(make_git_repo):
-    root = make_git_repo({
-        "a.py": "def f(self):\n    for field in self._field_names:\n        x = 1\n"
-                "    for field in self._field_names:\n        y = 2\n"
-    })
-    assert similar_sites(root, r"for field in self\._field_names", ["a.py"]) == [
-        "a.py:2: for field in self._field_names:",
-        "a.py:4: for field in self._field_names:",
-    ]
-
-
-def test_similar_sites_ignores_empty_bad_or_too_broad_patterns(make_git_repo):
-    root = make_git_repo({"a.py": "x = 1\n" * 40})
-    assert similar_sites(root, "", ["a.py"]) == []
-    assert similar_sites(root, "(unclosed", ["a.py"]) == []
-    assert similar_sites(root, "x", ["a.py"], limit=5) == []

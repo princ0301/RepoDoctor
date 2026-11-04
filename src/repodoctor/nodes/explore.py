@@ -5,7 +5,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool
 
 from repodoctor.deps import Deps
-from repodoctor.nodes.util import clip, existing_files, similar_sites
+from repodoctor.nodes.util import clip, existing_files
 from repodoctor.prompts import load_prompt
 from repodoctor.state import RepoDoctorState
 
@@ -16,11 +16,7 @@ SUMMARY_REQUEST = (
     "- relevant_files: up to 5 source files (paths relative to the repository root, "
     "exactly as the tools showed them) that most likely need to change, most important "
     "first. Only files you have actually seen.\n"
-    "- hypothesis: 2-4 sentences explaining the root cause of the bug.\n"
-    "- pattern: only if the flaw is a code pattern that may repeat in those files (for "
-    "example several similar setters or parallel branches): a POSIX extended regular "
-    "expression matching single lines of the flawed code, so that every similar place can "
-    "be found. Leave it empty otherwise."
+    "- hypothesis: 2-4 sentences explaining the root cause of the bug."
 )
 
 
@@ -50,12 +46,6 @@ def _run_tool(tools: dict[str, BaseTool], call: dict) -> str:
         return f"ERROR: {type(e).__name__}: {e}"
 
 
-def _trace_line(call: dict, result: str) -> str:
-    args = ", ".join(f"{k}={str(v)[:40]!r}" for k, v in (call.get("args") or {}).items())
-    lines = result.strip().splitlines()
-    return f"{call['name']}({args}) -> {lines[0][:80] if lines else ''}"
-
-
 def _summary_text(result) -> str:
     named = ", ".join(result.relevant_files) or "(none)"
     return f"relevant_files: {named}\nhypothesis: {result.hypothesis}"
@@ -68,6 +58,12 @@ def _bad_paths_message(named: list[str]) -> str:
         + ". Report again, using only paths exactly as the tools showed them "
         "(for example in find_definition or list_dir results)."
     )
+
+
+def _trace_line(call: dict, result: str) -> str:
+    args = ", ".join(f"{k}={str(v)[:40]!r}" for k, v in (call.get("args") or {}).items())
+    lines = result.strip().splitlines()
+    return f"{call['name']}({args}) -> {lines[0][:80] if lines else ''}"
 
 
 def make_explore(deps: Deps):
@@ -124,16 +120,10 @@ def make_explore(deps: Deps):
                 f"(it named: {named}).",
                 "explore_trace": trace[-12:],
             }
-        sites = (
-            similar_sites(deps.workdir, result.pattern, files)
-            if deps.settings.sweep_similar
-            else []
-        )
         return {
             "relevant_files": files,
             "explored_files": files,
             "hypothesis": hypothesis,
-            "similar_sites": sites,
             "explore_trace": trace[-12:],
         }
 

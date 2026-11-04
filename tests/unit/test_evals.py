@@ -325,6 +325,12 @@ def test_load_results_keeps_the_latest_record_per_run(tmp_path):
     assert only.outcome == "resolved"
 
 
+def test_summarize_reports_calls_by_model():
+    r = result()
+    r.calls_by_model = {"big": 9, "free": 1}
+    assert "big=9 (90%)" in summarize([r])
+
+
 # ---------- discovery (mocked GitHub) ----------
 
 def mock_client(routes: dict) -> httpx.Client:
@@ -422,3 +428,11 @@ def test_grade_without_a_report_is_unresolved(gold):
     work, c = gold
     g = grade_tree(FakeOutcomes(None), INFO, work, c, 60)
     assert not g.resolved and "no report" in g.note
+
+def test_load_results_ignores_unknown_fields(tmp_path):
+    path = tmp_path / "r.jsonl"
+    record = asdict(result("a", 1))
+    record["field_from_another_version"] = ["x"]
+    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    (only,) = load_results(path)
+    assert only.case_id == "a"

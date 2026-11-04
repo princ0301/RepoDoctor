@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from repodoctor.schemas import FixProposal, ExploreResult
+from repodoctor.schemas import FixProposal
 
 
 def test_fix_proposal_tolerates_sloppy_model_output():
@@ -15,7 +15,4 @@ def test_fix_proposal_still_rejects_wrong_structures():
     with pytest.raises(ValidationError):
         FixProposal.model_validate({"edits": 5})
 
-def test_explore_result_pattern_defaults_to_empty():
-    assert ExploreResult(relevant_files=[], hypothesis="h", pattern=None).pattern == ""
-    assert ExploreResult(relevant_files=[], hypothesis="h").pattern == ""
 

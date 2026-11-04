@@ -4,7 +4,7 @@ import json
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 from repodoctor.config import Settings
@@ -69,11 +69,11 @@ class CaseResult:
     llm_calls: int = 0
     slowest_calls: list[dict] = field(default_factory=list)
     failed_calls: int = 0
+    calls_by_model: dict = field(default_factory=dict)
     timings: dict = field(default_factory=dict)
     context_omitted: list[str] = field(default_factory=list)
     explored_files: list[str] = field(default_factory=list)
     edited_tests: list[str] = field(default_factory=list)
-    similar_sites: list[str] = field(default_factory=list)
     explore_trace: list[str] = field(default_factory=list)
 
 
@@ -174,11 +174,11 @@ def run_case(
         llm_calls=final.get("llm_calls", 0),
         slowest_calls=sorted(final.get("llm_timeline", []), key=lambda c: -c["seconds"])[:3],
         failed_calls=sum(1 for c in final.get("llm_timeline", []) if not c["ok"]),
+        calls_by_model=dict(Counter(c["model"] for c in final.get("llm_timeline", []))),
         timings=final.get("timings", {}),
         context_omitted=final.get("context_omitted", []),
         explored_files=final.get("explored_files", []),
         edited_tests=final.get("edited_tests", []),
-        similar_sites=final.get("similar_sites", []),
         explore_trace=final.get("explore_trace", []),
     )
 
@@ -226,11 +226,13 @@ def run_eval(
 
 
 def load_results(path: Path) -> list[CaseResult]:
-    """The latest record for each (case, trial), so resumed runs replace earlier errors."""
+    """The latest record for each (case, trial), so resumed runs replace earlier errors.
+    Keys this version does not know (from older or newer versions) are ignored."""
+    known = {f.name for f in fields(CaseResult)}
     latest: dict[tuple[str, int], CaseResult] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            r = CaseResult(**json.loads(line))
+            r = CaseResult(**{k: v for k, v in json.loads(line).items() if k in known})
             latest[(r.case_id, r.trial)] = r
     return list(latest.values())
 
@@ -295,6 +297,15 @@ def summarize(
         lines.append(
             f"Runs that edited existing tests: {len(edited)} "
             f"(resolved: {sum(r.resolved for r in edited)})"
+        )
+    by_model: Counter = Counter()
+    for r in results:
+        by_model.update(r.calls_by_model)
+    if by_model:
+        total = sum(by_model.values())
+        lines.append(
+            "Calls by model:     "
+            + ", ".join(f"{m}={n} ({100 * n / total:.0f}%)" for m, n in by_model.most_common())
         )
     secs = sorted(r.seconds for r in results)
     lines.append(f"Median time:        {secs[len(secs) // 2]:.0f}s per run")
