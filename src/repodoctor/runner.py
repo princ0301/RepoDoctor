@@ -82,7 +82,12 @@ def run_graph(
             last = node
             if progress:
                 progress(f"  [{clock() - started:.0f}s] {node} finished")
-        if timeout_s and clock() - started > timeout_s and not final.get("success"):
+        if (
+            timeout_s
+            and clock() - started > timeout_s
+            and not final.get("success")
+            and not final.get("error")
+        ):
             final["error"] = (
                 f"The run exceeded the time limit of {timeout_s}s "
                 f"and was stopped after the {last} step."

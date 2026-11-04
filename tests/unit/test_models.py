@@ -1,8 +1,15 @@
+import time
+
 import pytest
+from langchain_core.runnables import RunnableLambda
 from langchain_core.runnables.fallbacks import RunnableWithFallbacks
 
 from repodoctor.config import Settings
-from repodoctor.models import ModelConfigError, build_chain, parse_spec, role_specs
+from repodoctor.models import ModelConfigError, build_chain, parse_spec, role_specs, with_deadline
+
+
+def _boom(_x):
+    raise ValueError("boom")
 
 
 def test_parse_spec_splits_on_first_colon_only():
@@ -52,3 +59,17 @@ def test_fallback_with_key_is_chained():
         llm_fix="nvidia:n", llm_fallbacks="openrouter:m",
     )
     assert isinstance(build_chain("fix", s), RunnableWithFallbacks)
+
+
+def test_with_deadline_gives_up_on_a_slow_call_and_falls_back():
+    slow = RunnableLambda(lambda _x: time.sleep(3) or "late")
+    chain = with_deadline(slow, 0.3).with_fallbacks([RunnableLambda(lambda _x: "fallback")])
+    started = time.monotonic()
+    assert chain.invoke("q") == "fallback"
+    assert time.monotonic() - started < 2
+
+
+def test_with_deadline_passes_results_and_errors_through():
+    assert with_deadline(RunnableLambda(lambda x: x + 1), 5).invoke(1) == 2
+    with pytest.raises(ValueError):
+        with_deadline(RunnableLambda(_boom), 5).invoke(1)

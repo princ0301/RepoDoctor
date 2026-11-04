@@ -123,6 +123,14 @@ def _no_edits_message(
     return " ".join(parts)
 
 
+def _failed_attempt(state: RepoDoctorState, attempt: int, message: str) -> dict:
+    entry = {"attempt": attempt, "reasoning": "", "edits": [], "patch_errors": [message]}
+    return {
+        "attempts": attempt, "diff": "", "patch_errors": [message],
+        "history": [*state.get("history", []), entry],
+    }
+
+
 def make_fix(deps: Deps):
     system = load_prompt("fix")
     if deps.settings.allow_test_updates:
@@ -153,15 +161,17 @@ def make_fix(deps: Deps):
             if not is_malformed_output(e):
                 return {"error": f"The fix model failed on attempt {attempt}: "
                         f"{type(e).__name__}: {e}"}
-            errors = [
+            return _failed_attempt(
+                state, attempt,
                 "Your last reply was not valid structured output "
-                f"({type(e).__name__}: {clip(str(e), 400)}). Reply again with valid `edits`."
-            ]
-            entry = {"attempt": attempt, "reasoning": "", "edits": [], "patch_errors": errors}
-            return {
-                "attempts": attempt, "diff": "", "patch_errors": errors,
-                "history": [*state.get("history", []), entry],
-            }
+                f"({type(e).__name__}: {clip(str(e), 400)}). Reply again with valid `edits`.",
+            )
+        if proposal is None:
+            return _failed_attempt(
+                state, attempt,
+                "Your last reply was not valid structured output (it contained none). "
+                "Reply again with valid `edits`.",
+            )
 
         protected = set(_target_files(list(state["target_tests"])))
         result = _apply(root, proposal.edits, protected)

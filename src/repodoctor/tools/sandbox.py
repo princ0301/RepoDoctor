@@ -15,7 +15,8 @@ from repodoctor.tools.repo import ProjectInfo
 from repodoctor.tools.testreport import SuiteReport, parse_junit, parse_outcomes
 
 IMAGE = "repodoctor-sandbox:latest"
-INSTALL_TIMEOUT_S = 900
+INSTALL_TIMEOUT_S = 420
+PIP_ENV = "export PIP_DEFAULT_TIMEOUT=30 PIP_RETRIES=5; "
 BUILD_TIMEOUT_S = 1200
 MAX_LINES = 200
 MAX_CHARS = 20_000
@@ -201,8 +202,12 @@ class Sandbox:
         return p.stdout if p.returncode == 0 else None
 
     def install(self, info: ProjectInfo) -> ExecResult:
-        cmds = build_install_commands(self.workdir, info)
-        return self.run(" && ".join(cmds), INSTALL_TIMEOUT_S)
+        cmd = PIP_ENV + " && ".join(build_install_commands(self.workdir, info))
+        for _ in range(2):   # a stalled download is usually transient: try once more
+            result = self.run(cmd, INSTALL_TIMEOUT_S)
+            if result.ok or not result.timed_out:
+                return result
+        return result
 
     def lock_network(self) -> None:
         """Cut the container off from the network. Call after install."""

@@ -140,6 +140,13 @@ def make_reproduce(deps: Deps):
                     f"({clip(str(e), 300)}). Reply again with a complete test file."
                 )
                 continue
+            if test is None:
+                last_problem = "no structured output"
+                rejections.append(
+                    f"Attempt {attempt} was rejected: your reply contained no structured "
+                    "output. Reply again with a complete test file."
+                )
+                continue
 
             problem = static_problem(test)
             node_id = f"{rel}::{test.test_name}"

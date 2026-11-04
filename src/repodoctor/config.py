@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     llm_fix: str = "openrouter:nvidia/nemotron-3.5-super-vl:free"
     llm_fallbacks: str = ""
     llm_timeout_s: int = 120
+    llm_call_deadline_s: int = 240
     llm_max_retries: int = 2
 
     # --- Agent limits ---

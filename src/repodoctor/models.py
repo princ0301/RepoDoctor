@@ -1,9 +1,10 @@
 """Model factory: 'provider:model' specs -> LangChain chat models with fallbacks."""
 
+import concurrent.futures
 from collections.abc import Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.runnables import Runnable
+from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 from langchain_core.tools import BaseTool, tool
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
@@ -79,6 +80,25 @@ def adapt(
     return model
 
 
+def with_deadline(chain: Runnable, seconds: float) -> Runnable:
+    """Give up on a model call after `seconds` of wall-clock time. The client timeout only
+    limits the gap between bytes, so a slow trickle can otherwise run for many minutes."""
+    if seconds <= 0:
+        return chain
+
+    def call(value, config: RunnableConfig):
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(chain.invoke, value, config)
+        try:
+            return future.result(timeout=seconds)
+        except concurrent.futures.TimeoutError as e:
+            raise TimeoutError(f"model call exceeded {seconds}s") from e
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+
+    return RunnableLambda(call)
+
+
 def build_chain(
     role: str,
     settings: Settings,
@@ -94,7 +114,9 @@ def build_chain(
             if i == 0:
                 raise
             continue  # a fallback without credentials is simply not used
-        chains.append(adapt(model, tools=tools, schema=schema))
+        chains.append(with_deadline(
+            adapt(model, tools=tools, schema=schema), settings.llm_call_deadline_s
+        ))
     primary, *fallbacks = chains
     return primary.with_fallbacks(fallbacks) if fallbacks else primary
 

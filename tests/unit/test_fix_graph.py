@@ -187,6 +187,15 @@ def test_run_stops_when_over_the_time_limit(repo):
     assert final.get("attempts", 0) < 3
 
 
+def test_the_time_limit_does_not_hide_a_real_error(repo):
+    ticks = iter(range(0, 100_000, 1000))   # every clock() call advances 1000s
+    final = run(
+        repo, FakeSandbox(target=[], suites=[], install_ok=False), [],
+        timeout_s=600, clock=lambda: next(ticks),
+    )
+    assert "install failed" in final["error"]
+
+
 def test_progress_is_reported_per_step(repo):
     seen: list[str] = []
     tools = make_search_tools(repo)
@@ -332,6 +341,13 @@ def test_refuses_to_edit_the_target_test(repo):
 def test_malformed_model_output_is_a_failed_attempt_not_an_outage(repo):
     sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
     final = run(repo, sandbox, [_validation_error(), proposal(GOOD)])
+    assert final["success"] and final["attempts"] == 2
+    assert "not valid structured output" in final["history"][0]["feedback"]
+
+
+def test_a_reply_without_structured_output_is_a_failed_attempt(repo):
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [None, proposal(GOOD)])
     assert final["success"] and final["attempts"] == 2
     assert "not valid structured output" in final["history"][0]["feedback"]
 

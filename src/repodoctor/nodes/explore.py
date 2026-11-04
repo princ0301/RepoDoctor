@@ -7,6 +7,7 @@ from langchain_core.tools import BaseTool
 from repodoctor.deps import Deps
 from repodoctor.nodes.util import clip, existing_files
 from repodoctor.prompts import load_prompt
+from repodoctor.schemas import ExploreResult
 from repodoctor.state import RepoDoctorState
 
 TOOL_RESULT_LIMIT = 20_000
@@ -96,11 +97,13 @@ def make_explore(deps: Deps):
                     )
             messages.append(HumanMessage(SUMMARY_REQUEST))
             result = deps.summarizer.invoke(messages, config)
+            result = result or ExploreResult(relevant_files=[], hypothesis="")
             files = existing_files(deps.workdir, result.relevant_files)
             if not files:  # one more chance, told exactly what was wrong
                 messages.append(AIMessage(content=_summary_text(result)))
                 messages.append(HumanMessage(_bad_paths_message(result.relevant_files)))
                 result = deps.summarizer.invoke(messages, config)
+                result = result or ExploreResult(relevant_files=[], hypothesis="")
                 files = existing_files(deps.workdir, result.relevant_files)
         except Exception as e:  # rate limits, auth, malformed output after fallbacks
             return {
