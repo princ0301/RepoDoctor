@@ -8,5 +8,16 @@
   "andialbrecht__sqlparse-197": "the issue number is a pull request",
   "andialbrecht__sqlparse-176": "dependency install failed at the base commit",
   "prettytable__prettytable-297": "the maintainers' tests produced no report",
-  "prettytable__prettytable-310": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
+  "prettytable__prettytable-310": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__click-2705": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__click-2606": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__click-2415": "dependency install failed at the base commit",
+  "prettytable__prettytable-102": "the issue is not closed",
+  "prettytable__prettytable-170": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "prettytable__prettytable-166": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "prettytable__prettytable-86": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "prettytable__prettytable-163": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "prettytable__prettytable-127": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "prettytable__prettytable-131": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "python-humanize__humanize-21": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
 }

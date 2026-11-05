@@ -16,6 +16,7 @@ The agent was frozen (git tag `agent-frozen-for-heldout`, commit `<fill in from 
 | Cases solved in at least one of three trials | 14 / 19 |
 | Cases solved in all three trials | 9 / 19 |
 | Precision (resolved / runs where the agent reported success) | 37 / 45 (82%) |
+| Runs where the agent reported success and every fail-to-pass test passed (post hoc) | 44 / 45 |
 | Rough 95% interval for the resolve rate, with the 19 cases as the sampling unit | about 45% to 85% |
 | Model calls per run (mean) | 12 |
 | Time per run (median / mean) | 142 s / 285 s |
@@ -57,9 +58,9 @@ By case:
 
 ### What the failures show
 
-- **Fixes tend to stop at the reported instance.** The agent writes its own reproduction test from the issue, and that test also sets how far the fix goes. In `click-3571`, the tests for the `iterate` path pass and the three for the `update` path fail, while the issue's example only iterates. In `prettytable-247` the same three tests fail in all three trials, and their names suggest the reverse direction of the reported override. In `click-2012` the same three tests fail every time. Earlier development cases showed the same pattern. I have not read all of these tests in full, so this is an interpretation of test names and attempt histories. Eight runs ended this way (`wrong_fix`), and the same failing tests came back across trials, so these are systematic and not luck.
-- **One fix broke documented behavior.** In `humanize-333` both completed trials failed a test asserting that a too-large finite value still raises `OverflowError`.
-- **One case is hard.** `sqlparse-562` failed all three trials within the attempt budget.
+- **Most `wrong_fix` runs failed tests the agent could not see.** In 7 of the 8 runs, every fail-to-pass test passed. The failures were in pass-to-pass tests that the agent's own regression check, run on the repository as it was before the fix, had passed. So those tests (or test parameters) exist only in the maintainers' version: `humanize-333` (a too-large finite value must still raise `OverflowError`), `prettytable-247` (the reverse direction of the reported override) and `click-2012`. Counting them is the standard SWE-bench rule, but it means the headline partly measures agreement with the maintainers' design choices. Post hoc, 44 of the 45 runs where the agent reported success passed every fail-to-pass test.
+- **One run missed behavior the issue implied.** In `click-3571`, the tests for the `update` path failed while the `iterate` path passed, and the issue's example only iterates.
+- **The fixer spends attempts exploring.** In `sqlparse-562`, 8 of 9 attempts proposed no edit and asked for more files instead, and that case failed in all three trials.
 - **Infrastructure and robustness problems cost 6 runs.** Four runs never reached the agent: one dependency install failed and three took about 906 s, which matches the install timeout, and were mislabelled as run-time-limit failures by a bug in the harness. The cause is probably a network stall during install, but I did not confirm it. One run crashed because the model returned no structured output and the code did not handle that case, after a single model call that lasted about half an hour. One more run hit the time limit during a very slow fix call. These are defects in the harness and agent, not reasoning failures, and they are counted as failures above.
 
 ### How much to trust these numbers

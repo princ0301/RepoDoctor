@@ -250,6 +250,46 @@ def test_cases_and_specs_round_trip(tmp_path):
         ({"success": False}, None, "fix_failed"),
         ({"success": True}, None, "grading_error"),
         ({"success": True}, {"resolved": False}, "wrong_fix"),
+        (
+            {"success": True},
+            {
+                "resolved": False,
+                "f2p_failed": [],
+                "p2p_broken": ["test_a"],
+                "p2p_unseen": ["test_a"],
+            },
+            "unseen_test",
+        ),
+        (
+            {"success": True},
+            {
+                "resolved": False,
+                "f2p_failed": [],
+                "p2p_broken": ["t::b"],
+                "p2p_unseen": ["t::b"],
+            },
+            "unseen_test",
+        ),
+        (
+            {"success": True},
+            {
+                "resolved": False,
+                "f2p_failed": [],
+                "p2p_broken": ["t::b"],
+                "p2p_unseen": [],
+            },
+            "wrong_fix",
+        ),
+        (
+            {"success": True},
+            {
+                "resolved": False,
+                "f2p_failed": ["t::a"],
+                "p2p_broken": [],
+                "p2p_unseen": [],
+            },
+            "wrong_fix",
+        ),
         ({"success": True}, {"resolved": True}, "resolved"),
     ],
 )
@@ -266,6 +306,17 @@ def test_summarize_reports_rates_and_precision():
     assert "1/2 (50%)" in out
     assert "precision 50%" in out
     assert "resolved=1" in out and "wrong_fix=1" in out
+
+
+def test_summarize_reports_tests_the_agent_could_not_see():
+    out = summarize([result(), result("o__r-6", outcome="unseen_test")])
+    assert "Fixed the issue and every test the agent could see: 2/2" in out
+
+
+def test_summarize_counts_unseen_test_failures_separately():
+    out = summarize([result("a"), result("b", outcome="unseen_test")])
+    assert "1/2 (50%)" in out
+    assert "2/2" in out and "failed only tests the PR itself added" in out
 
 
 def test_summarize_reports_time_by_step():
@@ -424,6 +475,15 @@ def test_grade_counts_missing_tests_as_failures(gold):
     assert not g.resolved and g.p2p_broken == ["tests.test_gold::test_b"]
 
 
+def test_grade_separates_broken_tests_the_agent_could_not_see(gold):
+    work, c = gold
+    c.new_pass_to_pass = ["tests.test_gold::test_b"]
+    outcomes = {"tests.test_gold::test_a": "passed", "tests.test_gold::test_b": "failed"}
+    g = grade_tree(FakeOutcomes(outcomes), INFO, work, c, 60)
+    assert not g.resolved
+    assert g.p2p_broken == g.p2p_unseen == ["tests.test_gold::test_b"]
+
+
 def test_grade_without_a_report_is_unresolved(gold):
     work, c = gold
     g = grade_tree(FakeOutcomes(None), INFO, work, c, 60)
@@ -436,3 +496,10 @@ def test_load_results_ignores_unknown_fields(tmp_path):
     path.write_text(json.dumps(record) + "\n", encoding="utf-8")
     (only,) = load_results(path)
     assert only.case_id == "a"
+
+def test_discover_skips_candidates_already_known():
+    routes = {
+        "/repos/o/r/pulls": [pr(10, "Fixes #1")],
+        "/repos/o/r/pulls/10/files": files("src/a.py", "tests/test_a.py"),
+    }
+    assert discover(mock_client(routes), "o/r", exclude={("o/r", 1)}) == []

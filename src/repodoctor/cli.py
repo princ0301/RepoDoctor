@@ -393,27 +393,26 @@ def fix_issue(
 @app.command("eval-discover")
 def eval_discover(
     repo: str,
-    limit: int = typer.Option(8, help="Stop after this many candidates"),
+    limit: int = typer.Option(8, help="Stop after this many NEW candidates"),
     max_prs: int = typer.Option(200, help="How many recent merged PRs to scan"),
     out: Path = typer.Option(Path("evals/specs.json"), "--out"),
 ) -> None:
-    """Find (issue, fixing PR) candidates in a repo and add them to the specs file."""
+    """Find new (issue, fixing PR) candidates in a repo and add them to the specs file."""
     settings = get_settings()
     owner, _, name = repo.partition("/")
+    specs = load_specs(out) if out.exists() else []
+    known = {(s.repo, s.issue) for s in specs}
     try:
         check_allowed(IssueRef(owner, name, 0), settings.allowed_repo_list)
         with github_client(settings.github_token) as client:
-            found = discover(client, repo, limit=limit, max_prs=max_prs)
+            found = discover(client, repo, limit=limit, max_prs=max_prs, exclude=known)
     except (RepoNotAllowed, GitHubError) as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
-    specs = load_specs(out) if out.exists() else []
-    known = {(s.repo, s.issue) for s in specs}
-    added = [s for s in found if (s.repo, s.issue) not in known]
-    save_specs(out, specs + added)
-    for s in added:
+    save_specs(out, specs + found)
+    for s in found:
         typer.echo(f"  + {s.repo}#{s.issue}  (fixed by PR #{s.fix_pr})")
-    typer.echo(f"{len(added)} new candidate(s); {len(specs) + len(added)} in {out}")
+    typer.echo(f"{len(found)} new candidate(s); {len(specs) + len(found)} in {out}")
 
 
 @app.command("eval-build")
@@ -430,6 +429,10 @@ def eval_build(
     dev: bool = typer.Option(
         False, "--dev", help="Add cases that are new (not in --compare) to evals/dev_ids.txt"
     ),
+    refresh_missing: bool = typer.Option(
+        False, "--refresh-missing",
+        help="Rebuild held-out cases built before 'which required tests are new' was recorded",
+    ),
 ) -> None:
     """Validate specs and compute ground truth (which tests the fix must turn green)."""
     if not specs_file.exists():
@@ -439,6 +442,14 @@ def eval_build(
     known = {c.id: c for c in load_cases(compare)} if compare.exists() else {}
     cases = load_cases(out) if out.exists() else []
     done = {c.id for c in cases}
+    if refresh_missing:
+        keep = _dev_ids() | _excluded_ids()
+        stale = {c.id for c in cases if c.new_pass_to_pass is None and c.id not in keep}
+        cases = [c for c in cases if c.id not in stale]
+        done = {c.id for c in cases}
+        typer.echo(
+            f"Rebuilding {len(stale)} held-out case(s) to record which required tests are new"
+        )
     rejected_file = out.with_suffix(".rejected.json")
     rejected: dict[str, str] = (
         json.loads(rejected_file.read_text(encoding="utf-8")) if rejected_file.exists() else {}
@@ -569,6 +580,12 @@ def eval_recheck(
                 changed_tests += 1
                 detail = ", ".join(f"{p}: {n}" for p, n in edited.items())
                 typer.echo(f"TESTCHANGE {c.id}: the PR edits existing test lines ({detail})")
+            if c.new_pass_to_pass:
+                names = ", ".join(t.partition("::")[2] for t in c.new_pass_to_pass[:3])
+                typer.echo(
+                    f"NEWP2P     {c.id}: {len(c.new_pass_to_pass)} required test(s) are "
+                    f"absent from the base repository ({names})"
+                )
     typer.echo(
         f"{flagged} suspect pair(s); {changed_tests} case(s) edit existing tests; "
         f"{len(cases)} checked"
@@ -697,12 +714,28 @@ def eval_gold(
     cid: str = typer.Argument(..., metavar="CASE_ID"),
     cases_file: Path = typer.Option(Path("evals/cases.json"), "--cases"),
     limit: int = typer.Option(6, help="Maximum number of tests to print"),
+    test_id: list[str] | None = typer.Option(
+        None, "--test-id", help="Print these tests (ids as shown in failure reports)"
+    ),
+    new_p2p: bool = typer.Option(
+        False, "--new-p2p",
+        help="Print the required tests the PR itself added: the agent cannot see them",
+    ),
 ) -> None:
-    """Print the source of the maintainers' fail-to-pass tests (what the grader checks)."""
+    """Print the source of the maintainers' tests (what the grader checks)."""
     case = next((c for c in load_cases(cases_file) if c.id == cid), None)
     if case is None:
         typer.echo(f"ERROR   unknown case {cid}")
         raise typer.Exit(1)
+    if test_id:
+        ids = list(test_id)
+    elif new_p2p:
+        if case.new_pass_to_pass is None:
+            typer.echo("ERROR   not recorded for this case: run eval-build --refresh-missing")
+            raise typer.Exit(1)
+        ids = case.new_pass_to_pass
+    else:
+        ids = case.fail_to_pass
     try:
         with github_client(get_settings().github_token) as client:
             texts = {
@@ -712,15 +745,15 @@ def eval_gold(
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
     shown: set[tuple[str, str]] = set()
-    for test_id in case.fail_to_pass:
-        found = gold_test_source(test_id, texts)
+    for tid in ids:
+        found = gold_test_source(tid, texts)
         if found is None or found in shown:
             continue
         shown.add(found)
         if len(shown) > limit:
             typer.echo(f"... more tests not shown (--limit {limit})")
             break
-        typer.echo(f"--- {found[0]}  ({test_id}) ---\n{found[1]}\n")
+        typer.echo(f"--- {found[0]}  ({tid}) ---\n{found[1]}\n")
 
 
 @app.command("eval-report")

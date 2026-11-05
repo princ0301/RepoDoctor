@@ -367,7 +367,7 @@ def test_records_time_spent_in_each_step(repo):
 def test_a_fixer_that_needs_another_file_gets_it_on_the_next_attempt(repo):
     ask = FixProposal(reasoning="need it", edits=[], need_more_files=["tests/test_text.py"])
     sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
-    final = run(repo, sandbox, [ask, proposal(GOOD)])
+    final = run(repo, sandbox, [ask, proposal(GOOD)], fix_context_rounds=0)
     assert final["success"] and final["attempts"] == 2
     assert final["relevant_files"] == ["tests/test_text.py", "textkit.py"]
     assert final["explored_files"] == ["textkit.py"]
@@ -388,6 +388,7 @@ def test_a_file_cut_by_the_budget_is_promoted_when_the_fixer_asks_for_it(repo_tw
     final = run(
         repo_two_files, sandbox, [ask, proposal(GOOD)],
         relevant=("textkit.py", "extra.py"), fix_context_chars=len(CODE) + 60,
+        fix_context_rounds=0,
     )
     assert final["success"] and final["attempts"] == 2
     assert final["relevant_files"][0] == "extra.py"
@@ -400,6 +401,40 @@ def test_a_request_for_a_file_that_is_already_shown_says_so(repo):
     sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
     final = run(repo, sandbox, [ask, proposal(GOOD)])
     assert "already shown" in final["history"][0]["feedback"]
+
+
+def test_requested_files_arrive_in_the_same_attempt(repo):
+    ask = FixProposal(reasoning="need it", edits=[], need_more_files=["tests/test_text.py"])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [ask, proposal(GOOD)])
+    assert final["success"] and final["attempts"] == 1
+    assert final["history"][0]["context_rounds"] == 1
+
+
+def test_context_rounds_are_capped_and_then_the_attempt_fails(repo_two_files):
+    asks = [
+        FixProposal(reasoning="a", need_more_files=["extra.py"]),
+        FixProposal(reasoning="b", need_more_files=["tests/test_text.py"]),
+        FixProposal(reasoning="c", need_more_files=["tests/test_text.py"]),
+    ]
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo_two_files, sandbox, [*asks, proposal(GOOD)])
+    assert final["success"] and final["attempts"] == 2
+    assert "No edits were proposed" in final["history"][0]["feedback"]
+
+
+def test_asking_for_a_file_already_shown_ends_the_attempt(repo):
+    ask = FixProposal(reasoning="x", need_more_files=["textkit.py"])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [ask, proposal(GOOD)])
+    assert final["attempts"] == 2 and "already shown" in final["history"][0]["feedback"]
+
+
+def test_zero_rounds_restores_the_old_behavior(repo):
+    ask = FixProposal(reasoning="need it", edits=[], need_more_files=["tests/test_text.py"])
+    sandbox = FakeSandbox(target=[1, 0], suites=[BASE, CLEAN])
+    final = run(repo, sandbox, [ask, proposal(GOOD)], fix_context_rounds=0)
+    assert final["attempts"] == 2
 
 
 def test_aborts_when_target_already_passes(repo):

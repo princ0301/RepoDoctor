@@ -75,6 +75,9 @@ class CaseResult:
     explored_files: list[str] = field(default_factory=list)
     edited_tests: list[str] = field(default_factory=list)
     explore_trace: list[str] = field(default_factory=list)
+    f2p_failed: list[str] = field(default_factory=list)
+    p2p_broken: list[str] = field(default_factory=list)
+    p2p_unseen: list[str] = field(default_factory=list)
 
 
 def _slim_history(history: list[dict]) -> list[dict]:
@@ -89,6 +92,7 @@ def _slim_history(history: list[dict]) -> list[dict]:
             ],
             "patch_errors": [err[:400] for err in h.get("patch_errors", [])],
             "feedback": (h.get("feedback") or "")[:800],
+            "context_rounds": h.get("context_rounds", 0),
         }
         for h in history
     ]
@@ -110,7 +114,14 @@ def classify(final: dict, grade: dict | None) -> str:
         return "fix_failed"
     if grade is None:
         return "grading_error"
-    return "resolved" if grade["resolved"] else "wrong_fix"
+    if grade["resolved"]:
+        return "resolved"
+    broken = grade.get("p2p_broken", [])
+    only_unseen = (
+        not grade.get("f2p_failed") and bool(broken)
+        and set(broken) <= set(grade.get("p2p_unseen", []))
+    )
+    return "unseen_test" if only_unseen else "wrong_fix"
 
 
 def _detail(outcome: str, final: dict, grade: dict | None) -> str:
@@ -180,6 +191,9 @@ def run_case(
         explored_files=final.get("explored_files", []),
         edited_tests=final.get("edited_tests", []),
         explore_trace=final.get("explore_trace", []),
+        f2p_failed=(grade or {}).get("f2p_failed", [])[:20],
+        p2p_broken=(grade or {}).get("p2p_broken", [])[:20],
+        p2p_unseen=(grade or {}).get("p2p_unseen", [])[:20],
     )
 
 
@@ -262,6 +276,12 @@ def summarize(
         )
     else:
         lines.append(f"Agent said success: 0/{n}")
+    hidden = sum(r.outcome == "unseen_test" for r in results)
+    if hidden:
+        lines.append(
+            f"Fixed the issue and every test the agent could see: {resolved + hidden}/{n} "
+            f"(resolved {resolved} + {hidden} that failed only tests the PR itself added)"
+        )
     if len(case_ids) < n:
         once = sum(any(r.resolved for r in results if r.case_id == c) for c in case_ids)
         lines.append(f"Solved in at least one trial: {once}/{len(case_ids)} cases")

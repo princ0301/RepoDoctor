@@ -330,7 +330,8 @@
       "tests.test_time::test_precisedelta_suppress_units[val8-microseconds-suppress8-4 hours and 30000200 microseconds]",
       "tests.test_time::test_precisedelta_suppress_units[val9-microseconds-suppress9-240 minutes, 30 seconds and 200 microseconds]",
       "tests.test_time::test_time_unit"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "python-humanize__humanize-122",
@@ -663,7 +664,8 @@
       "tests.test_time::test_precisedelta_suppress_units[val8-microseconds-suppress8-4 hours and 30000200 microseconds]",
       "tests.test_time::test_precisedelta_suppress_units[val9-microseconds-suppress9-240 minutes, 30 seconds and 200 microseconds]",
       "tests.test_time::test_time_unit"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "python-humanize__humanize-333",
@@ -1072,7 +1074,8 @@
       "tests.test_time::test_rounding_by_fmt[%d-2.0-2]",
       "tests.test_time::test_rounding_by_fmt[%i-1.01-1]",
       "tests.test_time::test_time_unit"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "python-humanize__humanize-152",
@@ -1477,7 +1480,8 @@
       "tests.test_time::test_rounding_by_fmt[%d-2.0-2]",
       "tests.test_time::test_rounding_by_fmt[%i-1.01-1]",
       "tests.test_time::test_time_unit"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "python-humanize__humanize-62",
@@ -1681,7 +1685,8 @@
       "tests.test_number::test_scientific[test_args7-foo]",
       "tests.test_number::test_scientific[test_args8-None]",
       "tests.test_number::test_scientific[test_args9-1.0 x 10\\xb3]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "python-humanize__humanize-24",
@@ -1836,7 +1841,8 @@
       "tests.test_number::test_scientific[test_args7-foo]",
       "tests.test_number::test_scientific[test_args8-None]",
       "tests.test_number::test_scientific[test_args9-1.0 x 10\\xb3]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-3822",
@@ -1869,7 +1875,8 @@
       "tests.test_types.test_Path::test_path_type[Path-expect3]",
       "tests.test_types.test_Path::test_path_type[bytes-a/b/c.txt]",
       "tests.test_types.test_Path::test_path_type[str-a/b/c.txt]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2869",
@@ -2153,7 +2160,8 @@
       "tests.test_termui::test_tempfile_pager_handles_ansi[preserve ansi]",
       "tests.test_termui::test_tempfile_pager_handles_ansi[strip ansi]",
       "tests.test_termui::test_tempfile_pager_passes_pager_params"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-3571",
@@ -2413,7 +2421,8 @@
       "tests.test_termui::test_tempfile_pager_accepts_text[get_pager_file]",
       "tests.test_termui::test_tempfile_pager_handles_ansi[preserve ansi]",
       "tests.test_termui::test_tempfile_pager_handles_ansi[strip ansi]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-3740",
@@ -2661,7 +2670,8 @@
       "tests.test_termui::test_string_show_default_in_prompt[simple-string]",
       "tests.test_termui::test_string_show_default_in_prompt[string-with-spaces]",
       "tests.test_termui::test_string_show_default_in_prompt[unicode]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-3242",
@@ -2899,7 +2909,8 @@
       "tests.test_termui::test_string_show_default_in_prompt[simple-string]",
       "tests.test_termui::test_string_show_default_in_prompt[string-with-spaces]",
       "tests.test_termui::test_string_show_default_in_prompt[unicode]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-3487",
@@ -2974,7 +2985,8 @@
       "tests.test_utils::test_styling[styles9-\\x1b[41mx y\\x1b[0m]",
       "tests.test_utils::test_unset_sentinel",
       "tests.test_utils::test_unstyle_other_ansi[\\x1b[?25lx y\\x1b[?25h-x y]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2012",
@@ -3557,7 +3569,8 @@
       "tests.test_options::test_unknown_options[--foo]",
       "tests.test_options::test_unknown_options[-f]",
       "tests.test_options::test_winstyle_options"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-3084",
@@ -4117,7 +4130,8 @@
       "tests.test_options::test_unknown_options[--foo]",
       "tests.test_options::test_unknown_options[-f]",
       "tests.test_options::test_winstyle_options"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-601",
@@ -4234,7 +4248,8 @@
       "tests.test_regressions::test_splitting_at_and_backticks_issue588",
       "tests.test_regressions::test_stream",
       "tests.test_regressions::test_token_next_doesnt_ignore_skip_cm"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-332",
@@ -4344,7 +4359,8 @@
       "tests.test_parse::test_valid_identifier_names[_foo]",
       "tests.test_parse::test_valid_identifier_names[foo]",
       "tests.test_parse::test_wildcard_multiplication"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-773",
@@ -4458,7 +4474,8 @@
       "tests.test_regressions::test_splitting_at_and_backticks_issue588",
       "tests.test_regressions::test_stream",
       "tests.test_regressions::test_token_next_doesnt_ignore_skip_cm"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-752",
@@ -4572,7 +4589,8 @@
       "tests.test_regressions::test_splitting_at_and_backticks_issue588",
       "tests.test_regressions::test_stream",
       "tests.test_regressions::test_token_next_doesnt_ignore_skip_cm"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-701",
@@ -4695,7 +4713,8 @@
       "tests.test_grouping::test_simple_identifiers[foo as f]",
       "tests.test_grouping::test_simple_identifiers[foo f]",
       "tests.test_grouping::test_statement_get_type"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-763",
@@ -4793,7 +4812,8 @@
       "tests.test_parse::test_valid_identifier_names[_foo]",
       "tests.test_parse::test_valid_identifier_names[foo]",
       "tests.test_parse::test_wildcard_multiplication"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-632",
@@ -4900,7 +4920,8 @@
       "tests.test_regressions::test_splitting_at_and_backticks_issue588",
       "tests.test_regressions::test_stream",
       "tests.test_regressions::test_token_next_doesnt_ignore_skip_cm"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-562",
@@ -5006,7 +5027,8 @@
       "tests.test_regressions::test_splitting_at_and_backticks_issue588",
       "tests.test_regressions::test_stream",
       "tests.test_regressions::test_token_next_doesnt_ignore_skip_cm"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-474",
@@ -5050,7 +5072,8 @@
       "tests.test_html.TestHtmlOutput::test_html_output_without_escaped_header",
       "tests.test_html.TestHtmlOutput::test_internal_border_preserved_html",
       "tests.test_html.TestHtmlOutput::test_table_formatted_html_autoindex"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-113",
@@ -5284,7 +5307,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-200",
@@ -5524,7 +5548,8 @@
       "tests.test_rst::test_rst_output_with_fields",
       "tests.test_rst::test_rst_output_without_header",
       "tests.test_rst::test_rst_style_does_not_leak"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-342",
@@ -5583,7 +5608,8 @@
       "tests.test_style::test__str_block_width[abc-3]",
       "tests.test_style::test_colored_table",
       "tests.test_style::test_link_and_color"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-202",
@@ -5795,7 +5821,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-247",
@@ -6003,7 +6030,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-398",
@@ -6204,7 +6232,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-259",
@@ -6232,7 +6261,8 @@
       "tests.test_sections.TestClearing::test_clear_rows",
       "tests.test_sections.TestRowEndSection::test_row_end_section_via_argument",
       "tests.test_sections.TestRowEndSection::test_row_end_section_via_method"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-3071",
@@ -6261,7 +6291,8 @@
       "tests.test_defaults::test_multiple_defaults",
       "tests.test_defaults::test_multiple_flag_default",
       "tests.test_defaults::test_nargs_plus_multiple"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2447",
@@ -6313,7 +6344,8 @@
       "tests.test_context::test_propagate_opt_prefixes",
       "tests.test_context::test_propagate_show_default_setting",
       "tests.test_context::test_with_resource"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2995",
@@ -6386,7 +6418,8 @@
       "tests.test_shell_completion::test_zsh_full_complete_with_colons[env0-plain\\na\\n_\\nplain\\nb\\nbee\\nplain\\nc\\\\:d\\ncee:dee\\nplain\\nc:e\\n_\\n]",
       "tests.test_shell_completion::test_zsh_full_complete_with_colons[env1-plain\\nc\\\\:d\\ncee:dee\\nplain\\nc:e\\n_\\n]",
       "tests.test_shell_completion::test_zsh_full_complete_with_colons[env2-plain\\nc\\\\:d\\ncee:dee\\nplain\\nc:e\\n_\\n]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2939",
@@ -6424,7 +6457,8 @@
       "tests.test_chain::test_group_arg_behavior",
       "tests.test_chain::test_no_command_result_callback[False-1]",
       "tests.test_chain::test_no_command_result_callback[True-[]]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2906",
@@ -6494,7 +6528,8 @@
       "tests.test_shell_completion::test_path_types[type1-file]",
       "tests.test_shell_completion::test_path_types[type2-dir]",
       "tests.test_shell_completion::test_type_choice"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2832",
@@ -6652,7 +6687,8 @@
       "tests.test_options::test_usage_show_choices[text choices]",
       "tests.test_options::test_usage_show_choices[text/int choices]",
       "tests.test_options::test_winstyle_options"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2817",
@@ -6700,7 +6736,8 @@
       "tests.test_testing::test_with_color",
       "tests.test_testing::test_with_color_but_pause_not_blocking",
       "tests.test_testing::test_with_color_errors"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2813",
@@ -6774,7 +6811,8 @@
       "tests.test_shell_completion::test_zsh_full_complete_with_colons[env0-plain\\na\\n_\\nplain\\nb\\nbee\\nplain\\nc\\\\:d\\ncee:dee\\nplain\\nc:e\\n_\\n]",
       "tests.test_shell_completion::test_zsh_full_complete_with_colons[env1-plain\\nc\\\\:d\\ncee:dee\\nplain\\nc:e\\n_\\n]",
       "tests.test_shell_completion::test_zsh_full_complete_with_colons[env2-plain\\nc\\\\:d\\ncee:dee\\nplain\\nc:e\\n_\\n]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2644",
@@ -6839,7 +6877,8 @@
       "tests.test_shell_completion::test_path_types[type1-file]",
       "tests.test_shell_completion::test_path_types[type2-dir]",
       "tests.test_shell_completion::test_type_choice"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "pallets__click-2746",
@@ -6900,7 +6939,8 @@
       "tests.test_arguments::test_stdout_default",
       "tests.test_arguments::test_subcommand_help",
       "tests.test_arguments::test_when_argument_decorator_is_used_multiple_times_cls_is_preserved"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-663",
@@ -6994,7 +7034,8 @@
       "tests.test_parse::test_valid_identifier_names[_foo]",
       "tests.test_parse::test_valid_identifier_names[foo]",
       "tests.test_parse::test_wildcard_multiplication"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-566",
@@ -7114,7 +7155,8 @@
       "tests.test_grouping::test_simple_identifiers[foo as f]",
       "tests.test_grouping::test_simple_identifiers[foo f]",
       "tests.test_grouping::test_statement_get_type"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "andialbrecht__sqlparse-322",
@@ -7211,7 +7253,8 @@
       "tests.test_regressions::test_parse_sql_with_binary",
       "tests.test_regressions::test_stream",
       "tests.test_regressions::test_token_next_doesnt_ignore_skip_cm"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-232",
@@ -7262,7 +7305,8 @@
       "tests.test_style.TestStyle::test_style_reset[PLAIN_COLUMNS]",
       "tests.test_style.TestStyle::test_style_reset[RANDOM]",
       "tests.test_style.TestStyle::test_style_reset[SINGLE_BORDER]"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-165",
@@ -7496,7 +7540,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-354",
@@ -7730,7 +7775,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-199",
@@ -7950,7 +7996,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-272",
@@ -8169,7 +8216,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-288",
@@ -8353,7 +8401,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-54",
@@ -8602,7 +8651,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-237",
@@ -8836,7 +8886,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-253",
@@ -9028,7 +9079,8 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
   },
   {
     "id": "prettytable__prettytable-40",
@@ -9221,6 +9273,36 @@
       "tests.test_prettytable::test_autoindex",
       "tests.test_prettytable::test_paginate",
       "tests.test_prettytable::test_version"
-    ]
+    ],
+    "new_pass_to_pass": null
+  },
+  {
+    "id": "pallets__click-2632",
+    "repo": "pallets/click",
+    "issue": 2632,
+    "fix_pr": 2730,
+    "title": "Flag option with secondary opts: show_default=True does not show value from default_map in \"help\" output",
+    "base_sha": "5b1624bf09947d6f10eaffd63d6fb737dfe7656a",
+    "head_sha": "bf1e8be90c46428f8bf8b45f295af80cfaf2e188",
+    "test_files": [
+      "tests/test_defaults.py"
+    ],
+    "run_targets": [
+      "tests/test_defaults.py"
+    ],
+    "src_files": [
+      "CHANGES.rst",
+      "src/click/core.py"
+    ],
+    "fail_to_pass": [
+      "tests.test_defaults::test_flag_default_map"
+    ],
+    "pass_to_pass": [
+      "tests.test_defaults::test_basic_defaults",
+      "tests.test_defaults::test_multiple_defaults",
+      "tests.test_defaults::test_multiple_flag_default",
+      "tests.test_defaults::test_nargs_plus_multiple"
+    ],
+    "new_pass_to_pass": []
   }
 ]

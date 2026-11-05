@@ -19,15 +19,19 @@ def discover(
     limit: int = 15,
     max_prs: int = 200,
     max_src_files: int = 4,
+    exclude: set[tuple[str, int]] | None = None,
 ) -> list[CaseSpec]:
     """Merged PRs that say 'Fixes #N' for exactly one issue, change a test module and a
     small amount of Python source. Final validation happens in eval-build."""
     owner, _, name = repo.partition("/")
     ref = IssueRef(owner, name, 0)
     specs: list[CaseSpec] = []
+    skip = set(exclude or ())
     for pr in list_merged_prs(client, repo, max_prs):
         issues = closed_issue_numbers(pr.get("body") or "")
         if len(issues) != 1:
+            continue
+        if (repo, issues[0]) in skip:
             continue
         try:
             files = list_pr_files(client, ref, pr["number"])
@@ -40,6 +44,7 @@ def discover(
         if not any(p.endswith(".py") for p in src):
             continue
         specs.append(CaseSpec(repo, issues[0], pr["number"]))
+        skip.add((repo, issues[0]))
         if len(specs) >= limit:
             break
     return specs

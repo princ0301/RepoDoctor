@@ -131,6 +131,13 @@ def _failed_attempt(state: RepoDoctorState, attempt: int, message: str) -> dict:
     }
 
 
+_LAST_ROUND_NOTE = (
+    "\n\n## Last chance in this attempt\n"
+    "You cannot request more files after this reply. Write your best edits now from "
+    "what is shown."
+)
+
+
 def make_fix(deps: Deps):
     system = load_prompt("fix")
     if deps.settings.allow_test_updates:
@@ -143,49 +150,61 @@ def make_fix(deps: Deps):
 
         relevant = list(state["relevant_files"])
         if deps.settings.allow_test_updates:
-            # show the tests the last attempt broke, so they can be updated if the issue demands it
             promoted = list(dict.fromkeys(
                 f for f in (test_file_of(root, t) for t in state.get("regressed_tests", [])) if f
             ))
             relevant = [*promoted, *(f for f in relevant if f not in promoted)]
             relevant = relevant[:MAX_CONTEXT_FILES]
 
-        request, omitted = _fix_request(
-            {**state, "relevant_files": relevant}, root, deps.settings.fix_context_chars
-        )
-        try:
-            proposal = deps.fixer.invoke(
-                [SystemMessage(system), HumanMessage(request)], config
+        rounds = max(0, deps.settings.fix_context_rounds)
+        no_edit_message: str | None = None
+        omitted: list[str] = []
+        proposal = None
+        round_no = 0
+        for round_no in range(rounds + 1):
+            request, omitted = _fix_request(
+                {**state, "relevant_files": relevant}, root, deps.settings.fix_context_chars
             )
-        except Exception as e:
-            if not is_malformed_output(e):
-                return {"error": f"The fix model failed on attempt {attempt}: "
-                        f"{type(e).__name__}: {e}"}
-            return _failed_attempt(
-                state, attempt,
-                "Your last reply was not valid structured output "
-                f"({type(e).__name__}: {clip(str(e), 400)}). Reply again with valid `edits`.",
-            )
-        if proposal is None:
-            return _failed_attempt(
-                state, attempt,
-                "Your last reply was not valid structured output (it contained none). "
-                "Reply again with valid `edits`.",
-            )
-
-        protected = set(_target_files(list(state["target_tests"])))
-        result = _apply(root, proposal.edits, protected)
-        errors = list(result.errors)
-        if not proposal.edits:
+            if rounds and round_no == rounds:
+                request += _LAST_ROUND_NOTE
+            try:
+                proposal = deps.fixer.invoke(
+                    [SystemMessage(system), HumanMessage(request)], config
+                )
+            except Exception as e:
+                if not is_malformed_output(e):
+                    return {"error": f"The fix model failed on attempt {attempt}: "
+                            f"{type(e).__name__}: {e}"}
+                return _failed_attempt(
+                    state, attempt,
+                    "Your last reply was not valid structured output "
+                    f"({type(e).__name__}: {clip(str(e), 400)}). Reply again with valid `edits`.",
+                )
+            if proposal is None:   # the model answered without calling the output function
+                return _failed_attempt(
+                    state, attempt,
+                    "Your last reply was not valid structured output (it contained none). "
+                    "Reply again with valid `edits`.",
+                )
+            if proposal.edits:
+                break
             wanted = existing_files(root, proposal.need_more_files)
             shown = [f for f in wanted if f in relevant and f not in omitted]
             unknown = [
                 r for r in proposal.need_more_files
                 if r.strip() and not existing_files(root, [r])
             ]
+            something_new = any(f not in relevant or f in omitted for f in wanted)
             relevant = [*wanted, *(f for f in relevant if f not in wanted)][:MAX_CONTEXT_FILES]
-            errors = [_no_edits_message(wanted, shown, omitted, unknown)]
+            if not something_new or round_no == rounds:
+                no_edit_message = _no_edits_message(wanted, shown, omitted, unknown)
+                break
 
+        protected = set(_target_files(list(state["target_tests"])))
+        result = _apply(root, proposal.edits, protected)
+        errors = list(result.errors)
+        if no_edit_message:
+            errors = [no_edit_message]
         diff = get_diff(root, result.changed_files) if result.ok else ""
         if result.ok and not diff.strip():
             errors = ["The edits did not change any code."]
@@ -195,6 +214,7 @@ def make_fix(deps: Deps):
             "reasoning": proposal.reasoning,
             "edits": [e.model_dump() for e in proposal.edits],
             "patch_errors": errors,
+            "context_rounds": round_no,
         }
         return {
             "attempts": attempt,

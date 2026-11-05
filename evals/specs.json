@@ -313,5 +313,140 @@
     "repo": "prettytable/prettytable",
     "issue": 40,
     "fix_pr": 305
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2632,
+    "fix_pr": 2730
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2705,
+    "fix_pr": 2729
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2697,
+    "fix_pr": 2728
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2609,
+    "fix_pr": 2727
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2695,
+    "fix_pr": 2696
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2621,
+    "fix_pr": 2622
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2606,
+    "fix_pr": 2607
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2322,
+    "fix_pr": 2604
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2415,
+    "fix_pr": 2555
+  },
+  {
+    "repo": "pallets/click",
+    "issue": 2522,
+    "fix_pr": 2523
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 290,
+    "fix_pr": 299
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 295,
+    "fix_pr": 296
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 102,
+    "fix_pr": 183
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 170,
+    "fix_pr": 171
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 166,
+    "fix_pr": 167
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 86,
+    "fix_pr": 140
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 163,
+    "fix_pr": 164
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 127,
+    "fix_pr": 146
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 131,
+    "fix_pr": 133
+  },
+  {
+    "repo": "prettytable/prettytable",
+    "issue": 129,
+    "fix_pr": 132
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 174,
+    "fix_pr": 272
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 175,
+    "fix_pr": 273
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 105,
+    "fix_pr": 204
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 17,
+    "fix_pr": 100
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 86,
+    "fix_pr": 87
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 12,
+    "fix_pr": 41
+  },
+  {
+    "repo": "python-humanize/humanize",
+    "issue": 21,
+    "fix_pr": 23
   }
 ]

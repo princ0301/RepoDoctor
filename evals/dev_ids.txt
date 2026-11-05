@@ -29,3 +29,24 @@ prettytable__prettytable-54
 prettytable__prettytable-237
 prettytable__prettytable-253
 prettytable__prettytable-40
+
+# round-1 held-out cases: studied after the frozen run, so now dev cases
+python-humanize__humanize-333
+python-humanize__humanize-152
+pallets__click-3822
+pallets__click-2869
+pallets__click-3571
+pallets__click-3242
+pallets__click-3487
+pallets__click-2012
+andialbrecht__sqlparse-601
+andialbrecht__sqlparse-332
+andialbrecht__sqlparse-773
+andialbrecht__sqlparse-752
+andialbrecht__sqlparse-763
+andialbrecht__sqlparse-562
+prettytable__prettytable-474
+prettytable__prettytable-113
+prettytable__prettytable-202
+prettytable__prettytable-247
+prettytable__prettytable-259

@@ -20,6 +20,7 @@ class Grade:
     resolved: bool
     f2p_failed: list[str] = field(default_factory=list)
     p2p_broken: list[str] = field(default_factory=list)
+    p2p_unseen: list[str] = field(default_factory=list)
     note: str = ""
 
 
@@ -34,4 +35,5 @@ def grade_tree(
         return Grade(False, note=f"the gold tests produced no report (exit {result.exit_code})")
     f2p = [t for t in case.fail_to_pass if outcomes.get(t) != "passed"]
     p2p = [t for t in case.pass_to_pass if outcomes.get(t) != "passed"]
-    return Grade(not f2p and not p2p, f2p, p2p)
+    unseen = set(case.new_pass_to_pass or [])
+    return Grade(not f2p and not p2p, f2p, p2p, [t for t in p2p if t in unseen])

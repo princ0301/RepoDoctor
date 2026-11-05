@@ -111,6 +111,13 @@ def build_case(
             raise CaseRejected("dependency install failed at the base commit")
         sb.lock_network()
 
+        # Which of the PR's tests could the agent see? Run its test files as they are BEFORE the PR.
+        existing = [p for p in run_targets if (dest / p).is_file()]
+        seen: dict[str, str] = {}
+        if existing:
+            _, seen_outcomes = sb.run_outcomes(info, existing, settings.sandbox_timeout_s)
+            seen = seen_outcomes or {}
+
         # A: code before the fix + the maintainers' tests
         run_git("checkout", head, "--", *test_files, cwd=dest)
         _, before = sb.run_outcomes(info, run_targets, settings.sandbox_timeout_s)
@@ -137,4 +144,6 @@ def build_case(
         fix_pr=spec.fix_pr, title=issue.title, base_sha=pr.base_sha, head_sha=head,
         test_files=test_files, run_targets=run_targets, src_files=src_files,
         fail_to_pass=fail_to_pass, pass_to_pass=pass_to_pass,
+        # Parameter renumbering can make a changed test look seen, so this is only a guide.
+        new_pass_to_pass=sorted(t for t in pass_to_pass if t not in seen),
     )

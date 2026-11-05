@@ -29,6 +29,7 @@ class EvalCase:
     src_files: list[str]           # files the maintainers changed (for analysis only)
     fail_to_pass: list[str]        # fail before the fix, pass after it
     pass_to_pass: list[str]        # pass both before and after
+    new_pass_to_pass: list[str] | None = None   # of those: absent from the base repository
 
     @property
     def ref(self) -> IssueRef:
