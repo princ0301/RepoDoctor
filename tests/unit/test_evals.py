@@ -316,7 +316,7 @@ def test_summarize_reports_tests_the_agent_could_not_see():
 def test_summarize_counts_unseen_test_failures_separately():
     out = summarize([result("a"), result("b", outcome="unseen_test")])
     assert "1/2 (50%)" in out
-    assert "2/2" in out and "failed only tests the PR itself added" in out
+    assert "2/2" in out and "absent from the base repository" in out
 
 
 def test_summarize_reports_time_by_step():

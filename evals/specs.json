@@ -448,5 +448,65 @@
     "repo": "python-humanize/humanize",
     "issue": 21,
     "fix_pr": 23
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3318,
+    "fix_pr": 3327
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3320,
+    "fix_pr": 3335
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3294,
+    "fix_pr": 3298
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3302,
+    "fix_pr": 3304
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3297,
+    "fix_pr": 3300
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3301,
+    "fix_pr": 3306
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3289,
+    "fix_pr": 3292
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3272,
+    "fix_pr": 3283
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3275,
+    "fix_pr": 3276
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3271,
+    "fix_pr": 3273
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3247,
+    "fix_pr": 3266
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3242,
+    "fix_pr": 3243
   }
 ]

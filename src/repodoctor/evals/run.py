@@ -280,7 +280,8 @@ def summarize(
     if hidden:
         lines.append(
             f"Fixed the issue and every test the agent could see: {resolved + hidden}/{n} "
-            f"(resolved {resolved} + {hidden} that failed only tests the PR itself added)"
+            f"(resolved {resolved} + {hidden} that failed only tests whose ids are absent "
+            "from the base repository)"
         )
     if len(case_ids) < n:
         once = sum(any(r.resolved for r in results if r.case_id == c) for c in case_ids)

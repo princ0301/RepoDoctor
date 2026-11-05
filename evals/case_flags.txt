@@ -16,3 +16,7 @@ prettytable__prettytable-272     [scope]   # issue reports max_width; a test als
 prettytable__prettytable-354     [scope]   # fields and sort_key share the root cause of the reported sortby
 pallets__click-2012              [scope]   # covers leftovers of an earlier partial fix
 andialbrecht__sqlparse-701       [spec]    # tests assert sql.Over, Function.get_window() and exact token positions the issue never mentions
+pallets__click-2609              [spec]    # the issue proposes hide=; the PR and its test use hidden=
+pallets__click-2322              [spec]    # the issue asks to strip _command; the tests also require _cmd, _group, _grp
+python-humanize__humanize-105    [spec]    # the tests pin importlib, __spec__ and __file__ behavior the issue never mentions
+python-humanize__humanize-86     [spec]    # the issue asks for "1 googol" for 10**36; the test expects "1000.0 decillion"
