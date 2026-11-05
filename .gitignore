@@ -11,3 +11,6 @@ wheels/
 .env
 .repodoctor/
 *.db
+pytest-tmp/
+test-tmp/
+test-tmp-fixer/
