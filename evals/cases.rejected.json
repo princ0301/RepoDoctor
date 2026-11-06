@@ -19,5 +19,14 @@
   "prettytable__prettytable-163": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
   "prettytable__prettytable-127": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
   "prettytable__prettytable-131": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
-  "python-humanize__humanize-21": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
+  "python-humanize__humanize-21": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__werkzeug-3302": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__werkzeug-3297": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__werkzeug-3301": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__werkzeug-3272": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__flask-3193": "the issue was already closed when the PR was opened, so this PR did not fix it (the PR text only mentions the issue)",
+  "pallets__flask-5916": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__flask-5815": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__flask-5774": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pallets__flask-5786": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
 }

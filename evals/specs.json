@@ -508,5 +508,145 @@
     "repo": "pallets/werkzeug",
     "issue": 3242,
     "fix_pr": 3243
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 3193,
+    "fix_pr": 6133
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5916,
+    "fix_pr": 5917
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5815,
+    "fix_pr": 5818
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5774,
+    "fix_pr": 5799
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5786,
+    "fix_pr": 5797
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5636,
+    "fix_pr": 5637
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5553,
+    "fix_pr": 5634
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5628,
+    "fix_pr": 5630
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3189,
+    "fix_pr": 3218
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3146,
+    "fix_pr": 3147
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3142,
+    "fix_pr": 3148
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3121,
+    "fix_pr": 3136
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3127,
+    "fix_pr": 3129
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3108,
+    "fix_pr": 3110
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3105,
+    "fix_pr": 3109
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3090,
+    "fix_pr": 3091
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3005,
+    "fix_pr": 3006
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3007,
+    "fix_pr": 3008
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3075,
+    "fix_pr": 3078
+  },
+  {
+    "repo": "pallets/werkzeug",
+    "issue": 3065,
+    "fix_pr": 3066
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5472,
+    "fix_pr": 5499
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 998,
+    "fix_pr": 2635
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5504,
+    "fix_pr": 5526
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5391,
+    "fix_pr": 5393
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5258,
+    "fix_pr": 5264
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5004,
+    "fix_pr": 5063
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5051,
+    "fix_pr": 5054
+  },
+  {
+    "repo": "pallets/flask",
+    "issue": 5010,
+    "fix_pr": 5014
   }
 ]

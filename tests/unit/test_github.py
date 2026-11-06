@@ -4,6 +4,7 @@ import pytest
 from repodoctor.tools.github import (
     GitHubError,
     IssueData,
+    _get,
     fetch_issue,
     find_fixing_pr,
     format_issue_body,
@@ -199,3 +200,28 @@ def test_list_merged_prs_skips_unmerged():
 def test_closed_issue_numbers():
     assert closed_issue_numbers("Fixes #5 and closes #7. See #9.") == [5, 7]
     assert closed_issue_numbers("nothing here") == []
+
+def test_a_dropped_connection_is_retried(monkeypatch):
+    monkeypatch.setattr("repodoctor.tools.github.time.sleep", lambda _s: None)
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.RemoteProtocolError("Server disconnected")
+        return httpx.Response(200, json={"title": "t", "body": "", "state": "open"})
+
+    c = github_client("", transport=httpx.MockTransport(handler))
+    assert _get(c, "/x")["title"] == "t"
+    assert len(calls) >= 2
+
+
+def test_a_persistent_connection_failure_becomes_a_github_error(monkeypatch):
+    monkeypatch.setattr("repodoctor.tools.github.time.sleep", lambda _s: None)
+
+    def handler(request):
+        raise httpx.RemoteProtocolError("Server disconnected")
+
+    c = github_client("", transport=httpx.MockTransport(handler))
+    with pytest.raises(GitHubError, match="RemoteProtocolError"):
+        fetch_issue(c, REF)

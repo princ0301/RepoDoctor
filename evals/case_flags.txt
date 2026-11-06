@@ -20,3 +20,12 @@ pallets__click-2609              [spec]    # the issue proposes hide=; the PR an
 pallets__click-2322              [spec]    # the issue asks to strip _command; the tests also require _cmd, _group, _grp
 python-humanize__humanize-105    [spec]    # the tests pin importlib, __spec__ and __file__ behavior the issue never mentions
 python-humanize__humanize-86     [spec]    # the issue asks for "1 googol" for 10**36; the test expects "1000.0 decillion"
+pallets__click-2621              [spec]    # the issue names get_invalid_choice_fail_message(self); the test calls get_invalid_choice_message(value)
+pallets__click-2522              [spec]    # the tests need runner.isolation() to yield three values; the issue never says so
+prettytable__prettytable-295     [spec]    # exact markdown strings for narrow columns, e.g. "| :-| :-: |-: |", are not derivable from the issue
+python-humanize__humanize-174    [spec]    # tests pin ties-to-even rounding and unit carry-over rules the issue does not state
+python-humanize__humanize-175    [spec]    # the required tests are googol cases; the issue is about German plurals
+pallets__werkzeug-3242           [spec]    # exact string output for large floats and build ranges; the issue only says to avoid scientific notation
+pallets__flask-5553              [spec]    # the issue proposes new settings; the fix is a narrower routing change not derivable from it
+pallets__werkzeug-3320           [spec]    # the issue proposes a private _prepare_response; the PR adds public apply_status and deprecations
+pallets__werkzeug-3247           [spec]    # the issue says remove; the PR deprecates; 30 required tests, mostly in test_proxy_fix, are unrelated to it

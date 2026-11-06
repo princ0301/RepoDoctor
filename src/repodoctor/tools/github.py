@@ -2,7 +2,7 @@
 
 import re
 from dataclasses import dataclass
-
+import time
 import httpx
 
 from repodoctor.tools.issue_ref import IssueRef
@@ -59,11 +59,24 @@ def github_client(
     return httpx.Client(base_url=API, headers=headers, timeout=30, transport=transport)
 
 
+TRANSIENT = (
+    httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout,
+)
+
+
 def _get(client: httpx.Client, path: str, **params):
-    try:
-        r = client.get(path, params=params or None)
-    except httpx.HTTPError as e:
-        raise GitHubError(f"GitHub request failed: {type(e).__name__}: {e}") from e
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            r = client.get(path, params=params or None)
+            break
+        except TRANSIENT as e:   # a dropped connection is usually transient: try again
+            last = e
+            time.sleep(1.5 * (attempt + 1))
+        except httpx.HTTPError as e:
+            raise GitHubError(f"GitHub request failed: {type(e).__name__}: {e}") from e
+    else:
+        raise GitHubError(f"GitHub request failed: {type(last).__name__}: {last}") from last
     if r.status_code == 404:
         raise GitHubError(f"not found: {path}")
     if r.status_code in (403, 429):
