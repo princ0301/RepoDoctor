@@ -201,12 +201,15 @@ class Sandbox:
         p = _docker("exec", self.name or "", "cat", path, check=False)
         return p.stdout if p.returncode == 0 else None
 
-    def install(self, info: ProjectInfo) -> ExecResult:
+    def install(
+        self, info: ProjectInfo, *, timeout: int = INSTALL_TIMEOUT_S, attempts: int = 2
+    ) -> ExecResult:
         cmd = PIP_ENV + " && ".join(build_install_commands(self.workdir, info))
-        for _ in range(2):   # a stalled download is usually transient: try once more
-            result = self.run(cmd, INSTALL_TIMEOUT_S)
+        result = self.run(cmd, timeout)
+        for _ in range(attempts - 1):   # a stalled download is usually transient: retry
             if result.ok or not result.timed_out:
                 return result
+            result = self.run(cmd, timeout)
         return result
 
     def lock_network(self) -> None:

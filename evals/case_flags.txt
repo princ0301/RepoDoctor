@@ -29,3 +29,8 @@ pallets__werkzeug-3242           [spec]    # exact string output for large float
 pallets__flask-5553              [spec]    # the issue proposes new settings; the fix is a narrower routing change not derivable from it
 pallets__werkzeug-3320           [spec]    # the issue proposes a private _prepare_response; the PR adds public apply_status and deprecations
 pallets__werkzeug-3247           [spec]    # the issue says remove; the PR deprecates; 30 required tests, mostly in test_proxy_fix, are unrelated to it
+pallets__click-2695              [spec]    # the test pins the exact wording "(env var: 'bar')"; the issue only asks to show the env var
+pallets__werkzeug-3289           [spec]    # the tests call contains_strong(ETag); the issue names only contains and contains_weak
+pallets__werkzeug-3275           [spec]    # the test needs the private utils._environ_property, which the issue never mentions
+pallets__flask-5628              [spec]    # the test calls load_dotenv(..., load_defaults=False); the issue names no parameter
+pallets__werkzeug-3271           [scope]   # the tests need warnings on to_header() and .browser; the issue only mentions .string

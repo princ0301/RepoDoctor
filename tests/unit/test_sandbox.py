@@ -1,5 +1,5 @@
 from repodoctor.tools.repo import ProjectInfo
-from repodoctor.tools.sandbox import build_install_commands, truncate_output
+from repodoctor.tools.sandbox import Sandbox, build_install_commands, truncate_output, ExecResult
 
 
 def test_truncate_small_output_unchanged():
@@ -43,3 +43,19 @@ def test_install_commands_requirements_only(tmp_path):
         "pip install -r requirements.txt",
         "pip install pytest",
     ]
+
+def test_install_retries_only_after_a_timeout(tmp_path):
+    calls: list[int] = []
+
+    class Stalls(Sandbox):
+        def run(self, cmd, timeout):
+            calls.append(timeout)
+            first = len(calls) == 1
+            return ExecResult(-1 if first else 0, "", first, 0.0)
+
+    assert Stalls(tmp_path).install(ProjectInfo(True), timeout=7, attempts=2).ok
+    assert calls == [7, 7]
+
+    calls.clear()
+    assert not Stalls(tmp_path).install(ProjectInfo(True), timeout=7, attempts=1).ok
+    assert calls == [7]

@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     fix_context_chars: int = 240_000
     fix_context_rounds: int = 2
     run_timeout_s: int = 900       # set RUN_TIMEOUT_S=0 to disable; checked between graph steps
+    build_install_timeout_s: int = 300   # eval-build: one install attempt, no retry
+    build_step_timeout_s: int = 240      # eval-build: each test run
 
     # --- Sandbox ---
     sandbox_timeout_s: int = 300

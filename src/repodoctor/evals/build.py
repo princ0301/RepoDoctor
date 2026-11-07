@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from pathlib import Path
+import time
 
 import httpx
 
@@ -17,7 +18,7 @@ from repodoctor.tools.repo import (
     remove_dir,
     run_git,
 )
-from repodoctor.tools.sandbox import Sandbox, ensure_image
+from repodoctor.tools.sandbox import Sandbox, SandboxError, ensure_image
 
 MAX_SRC_FILES = 4
 
@@ -105,26 +106,43 @@ def build_case(
         raise CaseRejected(f"unsupported project: {info.reason}")
 
     ensure_image()
+    step_timeout = settings.build_step_timeout_s
     with Sandbox(dest, memory=settings.sandbox_memory, cpus=settings.sandbox_cpus) as sb:
-        installed = sb.install(info)
+        log("  installing dependencies at the base commit ...")
+        started = time.monotonic()
+        installed = sb.install(info, timeout=settings.build_install_timeout_s, attempts=1)
+        log(f"  install: {time.monotonic() - started:.0f}s")
+        if installed.timed_out:
+            raise SandboxError(
+                f"dependency install timed out after {settings.build_install_timeout_s}s "
+                "(not recorded as rejected; rerun to retry)"
+            )
         if not installed.ok:
             raise CaseRejected("dependency install failed at the base commit")
         sb.lock_network()
 
+        def tests(label: str, args: list[str]) -> dict[str, str] | None:
+            began = time.monotonic()
+            result, outcomes = sb.run_outcomes(info, args, step_timeout)
+            log(f"  {label}: {time.monotonic() - began:.0f}s")
+            if result.timed_out:
+                raise CaseRejected(
+                    f"the maintainers' tests did not finish within {step_timeout}s "
+                    f"({label}); they may start servers or need network access"
+                )
+            return outcomes
+
         # Which of the PR's tests could the agent see? Run its test files as they are BEFORE the PR.
         existing = [p for p in run_targets if (dest / p).is_file()]
-        seen: dict[str, str] = {}
-        if existing:
-            _, seen_outcomes = sb.run_outcomes(info, existing, settings.sandbox_timeout_s)
-            seen = seen_outcomes or {}
+        seen = (tests("tests before the PR", existing) or {}) if existing else {}
 
         # A: code before the fix + the maintainers' tests
         run_git("checkout", head, "--", *test_files, cwd=dest)
-        _, before = sb.run_outcomes(info, run_targets, settings.sandbox_timeout_s)
+        before = tests("PR tests on the old code", run_targets)
         # B: the code before the fix with ONLY the PR's own changes applied
         run_git("reset", "--hard", "-q", "HEAD", cwd=dest)
         apply_pr_changes(dest, head, files)
-        _, after = sb.run_outcomes(info, run_targets, settings.sandbox_timeout_s)
+        after = tests("PR tests on the PR's code", run_targets)
 
     if before is None or after is None:
         raise CaseRejected("the maintainers' tests produced no report")

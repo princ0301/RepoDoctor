@@ -648,5 +648,80 @@
     "repo": "pallets/flask",
     "issue": 5010,
     "fix_pr": 5014
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1474,
+    "fix_pr": 1475
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1476,
+    "fix_pr": 1477
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1472,
+    "fix_pr": 1473
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 945,
+    "fix_pr": 948
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 610,
+    "fix_pr": 611
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 781,
+    "fix_pr": 1346
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 577,
+    "fix_pr": 1351
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1333,
+    "fix_pr": 1334
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1304,
+    "fix_pr": 1311
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1318,
+    "fix_pr": 1319
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1315,
+    "fix_pr": 1316
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 831,
+    "fix_pr": 1299
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1204,
+    "fix_pr": 1206
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1178,
+    "fix_pr": 1179
+  },
+  {
+    "repo": "pypa/packaging",
+    "issue": 1162,
+    "fix_pr": 1163
   }
 ]

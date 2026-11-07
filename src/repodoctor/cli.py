@@ -418,6 +418,9 @@ def eval_discover(
 @app.command("eval-build")
 def eval_build(
     specs_file: Path = typer.Option(Path("evals/specs.json"), "--specs"),
+    repo: list[str] | None = typer.Option(
+        None, "--repo", help="Only build specs of this repo (repeatable)"
+    ),
     out: Path = typer.Option(Path("evals/cases.json"), "--out"),
     compare: Path = typer.Option(
         Path("evals/cases.json"), "--compare",
@@ -456,6 +459,8 @@ def eval_build(
     )
     with github_client(settings.github_token) as client:
         for spec in load_specs(specs_file):
+            if repo and spec.repo not in repo:
+                continue
             cid = case_id(spec.repo, spec.issue)
             if cid in done:
                 typer.echo(f"Skipping {cid} (already built)")
