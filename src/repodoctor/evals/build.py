@@ -113,10 +113,7 @@ def build_case(
         installed = sb.install(info, timeout=settings.build_install_timeout_s, attempts=1)
         log(f"  install: {time.monotonic() - started:.0f}s")
         if installed.timed_out:
-            raise SandboxError(
-                f"dependency install timed out after {settings.build_install_timeout_s}s "
-                "(not recorded as rejected; rerun to retry)"
-            )
+            raise SandboxError(f"dependency install timed out after {settings.build_install_timeout_s}s")
         if not installed.ok:
             raise CaseRejected("dependency install failed at the base commit")
         sb.lock_network()

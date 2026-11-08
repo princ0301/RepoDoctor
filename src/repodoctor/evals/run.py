@@ -80,6 +80,11 @@ class CaseResult:
     p2p_unseen: list[str] = field(default_factory=list)
 
 
+def is_infrastructure_failure(r: CaseResult) -> bool:
+    """The models were unavailable, or the run never reached the agent (no model call)."""
+    return r.outcome == "model_error" or (r.outcome == "setup_error" and r.llm_calls == 0)
+
+
 def _slim_history(history: list[dict]) -> list[dict]:
     """Per-attempt record, trimmed so results.jsonl stays readable."""
     return [
@@ -228,11 +233,11 @@ def run_eval(
                 f"(slowest {slow:.0f}s) {r.detail}".rstrip()
             )
             consecutive_model_errors = (
-                consecutive_model_errors + 1 if r.outcome == "model_error" else 0
+                consecutive_model_errors + 1 if is_infrastructure_failure(r) else 0
             )
             if consecutive_model_errors >= stop_after_model_errors:
                 log(
-                    "Stopping: the models keep failing (quota or rate limit?). "
+                    "Stopping: the models keep failing (quota, rate limit or network?). "
                     "Resume later with --resume " + str(results_file)
                 )
                 return results
@@ -249,6 +254,41 @@ def load_results(path: Path) -> list[CaseResult]:
             r = CaseResult(**{k: v for k, v in json.loads(line).items() if k in known})
             latest[(r.case_id, r.trial)] = r
     return list(latest.values())
+
+
+def compare(
+    a: list[CaseResult], b: list[CaseResult], names: tuple[str, str] = ("A", "B")
+) -> str:
+    """Per-case and total comparison of two sets of runs on the same cases."""
+    cases = sorted({r.case_id for r in a} | {r.case_id for r in b})
+
+    def tally(rs: list[CaseResult], cid: str) -> tuple[int, int]:
+        mine = [r for r in rs if r.case_id == cid]
+        return sum(r.resolved for r in mine), len(mine)
+
+    def no_edit(rs: list[CaseResult]) -> tuple[int, int]:
+        attempts = [h for r in rs for h in r.history]
+        return sum(1 for h in attempts if not h.get("edits")), len(attempts)
+
+    lines = [f"{'case':<40} {names[0]:>7} {names[1]:>7}"]
+    better = worse = same = 0
+    for cid in cases:
+        (ra, na), (rb, nb) = tally(a, cid), tally(b, cid)
+        lines.append(f"{cid:<40} {ra:>3}/{na:<3} {rb:>3}/{nb:<3}")
+        if na and nb:
+            fa, fb = ra / na, rb / nb
+            better += fb > fa
+            worse += fb < fa
+            same += fb == fa
+    (ea, ta), (eb, tb) = no_edit(a), no_edit(b)
+    lines += [
+        "",
+        f"Resolved runs:      {names[0]} {sum(r.resolved for r in a)}/{len(a)}   "
+        f"{names[1]} {sum(r.resolved for r in b)}/{len(b)}",
+        f"Cases by resolve rate: {names[1]} better in {better}, worse in {worse}, same in {same}",
+        f"Fix attempts with no edit: {names[0]} {ea}/{ta}   {names[1]} {eb}/{tb}",
+    ]
+    return "\n".join(lines)
 
 
 def summarize(

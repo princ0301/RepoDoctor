@@ -43,6 +43,13 @@ def test_files_are_shared_with_host(tmp_path):
     assert (tmp_path / "from_container.txt").read_text().strip() == "data"
 
 
+def test_pip_cache_volume_is_shared_between_containers(tmp_path):
+    with Sandbox(tmp_path) as sb:
+        sb.run("mkdir -p /root/.cache/pip && echo cached > /root/.cache/pip/_probe", 20)
+    with Sandbox(tmp_path) as sb:
+        assert "cached" in sb.run("cat /root/.cache/pip/_probe", 20).output
+
+
 def test_timeout_kills_the_command(tmp_path):
     with Sandbox(tmp_path) as sb:
         r = sb.run("sleep 60", timeout=2)

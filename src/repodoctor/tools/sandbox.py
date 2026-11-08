@@ -15,6 +15,7 @@ from repodoctor.tools.repo import ProjectInfo
 from repodoctor.tools.testreport import SuiteReport, parse_junit, parse_outcomes
 
 IMAGE = "repodoctor-sandbox:latest"
+PIP_CACHE_VOLUME = "repodoctor-pip-cache"
 INSTALL_TIMEOUT_S = 420
 PIP_ENV = "export PIP_DEFAULT_TIMEOUT=30 PIP_RETRIES=5; "
 BUILD_TIMEOUT_S = 1200
@@ -152,6 +153,7 @@ class Sandbox:
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--mount", f"type=bind,source={self.workdir},target=/work",
+            "--mount", f"type=volume,source={PIP_CACHE_VOLUME},target=/root/.cache/pip",
             "-w", "/work",
             self.image, "sleep", "infinity",
         )

@@ -137,6 +137,7 @@ def run(repo, sandbox, proposals, explorer=None, max_attempts=3, targets=(TARGET
         **settings_kw):
     tools = make_search_tools(repo)
     allow_test_updates = settings_kw.pop("allow_test_updates", False)
+    settings_kw.setdefault("fix_context_rounds", 2)
     deps = Deps(
         settings=Settings(
             _env_file=None,

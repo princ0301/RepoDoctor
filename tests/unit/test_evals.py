@@ -27,6 +27,8 @@ from repodoctor.evals.run import (
     CaseResult,
     attempt_kind,
     classify,
+    compare,
+    is_infrastructure_failure,
     load_results,
     run_eval,
     summarize,
@@ -301,11 +303,29 @@ def result(case_id_="o__r-5", trial=1, outcome="resolved", seconds=60.0, success
     return CaseResult(case_id_, trial, outcome, outcome == "resolved", success, 1, 1, seconds)
 
 
+def test_setup_errors_without_model_calls_are_infrastructure_failures():
+    r = result(outcome="setup_error")
+    assert is_infrastructure_failure(r)          # llm_calls defaults to 0
+    r.llm_calls = 5
+    assert not is_infrastructure_failure(r)
+    assert not is_infrastructure_failure(result(outcome="fix_failed"))
+
+
 def test_summarize_reports_rates_and_precision():
     out = summarize([result(), result("o__r-6", outcome="wrong_fix")])
     assert "1/2 (50%)" in out
     assert "precision 50%" in out
     assert "resolved=1" in out and "wrong_fix=1" in out
+
+
+def test_compare_reports_per_case_and_totals():
+    a = [result("x", 1, "wrong_fix"), result("y", 1)]
+    b = [result("x", 1), result("y", 1)]
+    a[0].history = [{"edits": []}, {"edits": [{"path": "p"}]}]
+    out = compare(a, b)
+    assert "A 1/2   B 2/2" in out
+    assert "B better in 1, worse in 0, same in 1" in out
+    assert "A 1/2   B 0/0" in out
 
 
 def test_summarize_reports_tests_the_agent_could_not_see():

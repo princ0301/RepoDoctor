@@ -42,5 +42,12 @@
   "pallets__flask-5258": "dependency install failed at the base commit",
   "pallets__flask-5004": "dependency install failed at the base commit",
   "pallets__flask-5051": "dependency install failed at the base commit",
-  "pallets__flask-5010": "dependency install failed at the base commit"
+  "pallets__flask-5010": "dependency install failed at the base commit",
+  "pypa__packaging-1472": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pypa__packaging-610": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pypa__packaging-781": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pypa__packaging-1333": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pypa__packaging-1318": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pypa__packaging-1315": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)",
+  "pypa__packaging-831": "the PR's tests do not fail before the fix and pass after it (they may not be collectable on the old code)"
 }

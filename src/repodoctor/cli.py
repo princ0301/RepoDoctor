@@ -23,7 +23,14 @@ from repodoctor.evals.cases import (
 )
 from repodoctor.evals.discover import discover
 from repodoctor.evals.gold import gold_test_source
-from repodoctor.evals.run import attempt_kind, load_results, run_eval, summarize
+from repodoctor.evals.run import (
+    attempt_kind,
+    compare,
+    is_infrastructure_failure,
+    load_results,
+    run_eval,
+    summarize,
+)
 from repodoctor.graph import build_hello_graph
 from repodoctor.models import ENDPOINTS, ModelConfigError, make_chat_model, probe, role_specs
 from repodoctor.runner import (
@@ -684,7 +691,7 @@ def eval_run(
     if resume:
         results_file = resume
         done = {
-            (r.case_id, r.trial) for r in load_results(resume) if r.outcome != "model_error"
+            (r.case_id, r.trial) for r in load_results(resume) if not is_infrastructure_failure(r)
         }
     else:
         out_dir = Path(".repodoctor/evals") / f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{label}"
@@ -699,6 +706,7 @@ def eval_run(
                 "repro_max_attempts": settings.repro_max_attempts,
                 "allow_test_updates": settings.allow_test_updates,
                 "fix_context_chars": settings.fix_context_chars,
+                "fix_context_rounds": settings.fix_context_rounds,
                 "run_timeout_s": settings.run_timeout_s,
                 "repodoctor_commit": _code_version(),
             }, indent=2),
@@ -712,6 +720,17 @@ def eval_run(
         done=done, log=typer.echo,
     )
     typer.echo("\n" + summarize(load_results(results_file), scope_ids=_scope_ids()))
+
+
+@app.command("eval-compare")
+def eval_compare(
+    a: list[Path] = typer.Option(..., "--a", help="results.jsonl file(s) of arm A"),
+    b: list[Path] = typer.Option(..., "--b", help="results.jsonl file(s) of arm B"),
+) -> None:
+    """Side-by-side comparison of two sets of runs on the same cases."""
+    typer.echo(compare(
+        [r for f in a for r in load_results(f)], [r for f in b for r in load_results(f)]
+    ))
 
 
 @app.command("eval-gold")
