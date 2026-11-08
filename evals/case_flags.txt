@@ -34,3 +34,8 @@ pallets__werkzeug-3289           [spec]    # the tests call contains_strong(ETag
 pallets__werkzeug-3275           [spec]    # the test needs the private utils._environ_property, which the issue never mentions
 pallets__flask-5628              [spec]    # the test calls load_dotenv(..., load_defaults=False); the issue names no parameter
 pallets__werkzeug-3271           [scope]   # the tests need warnings on to_header() and .browser; the issue only mentions .string
+pallets__werkzeug-3105           [spec]    # the test pins a HEAD/OPTIONS exclusion and an exact-equality rule the issue never states
+pallets__werkzeug-3065           [spec]    # four of the five required tests pin the decoder's first event size, which the issue does not mention
+pypa__packaging-945              [spec]    # the required validation rules come from PEP 794, which is neither in the repository nor in the issue
+pypa__packaging-1476             [spec]    # the tests inspect private attributes (_admit, _prereleases_configured) the issue never mentions
+pallets__werkzeug-3005           [spec]    # the tests pin that host_matching disables subdomain_matching, which the issue never states
