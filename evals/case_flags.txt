@@ -1,5 +1,6 @@
 # Case flags. One line per case: <id>  [tag]  # reason
 # [spec]  the tests require names or exact output the issue does not give. eval-run skips these.
+# [infra] the harness cannot run this case (e.g. the baseline test suite exceeds the time limit)
 # [scope] the tests need the fix to generalize beyond the reported instance. These still run
 #         and are reported separately: stopping at the first instance is a real weakness.
 # Decide from the issue and PR text only, never from how the agent performed.

@@ -1,0 +1,6 @@
+{
+  "pallets/werkzeug": {
+    "ignore": ["tests/test_serving.py"],
+    "reason": "starts servers and a reloader; test_reloader_sys_path[watchdog] hangs in the sandbox"
+  }
+}

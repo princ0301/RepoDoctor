@@ -56,6 +56,18 @@ def test_timeout_kills_the_command(tmp_path):
     assert r.timed_out and r.duration_s < 20
 
 
+@pytest.mark.slow
+def test_time_test_files_names_the_test_that_hangs(tmp_path):
+    (tmp_path / "test_fast.py").write_text("def test_a():\n    assert True\n")
+    (tmp_path / "test_hang.py").write_text("import time\n\ndef test_b():\n    time.sleep(60)\n")
+    info = ProjectInfo(True, test_command=["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"])
+    with Sandbox(tmp_path) as sb:
+        assert sb.run("pip install -q pytest", 180).ok
+        rows = {p: (st, last) for p, _s, st, last in sb.time_test_files(info, per_file_timeout=5)}
+    assert rows["test_fast.py"][0] == "ok"
+    assert rows["test_hang.py"][0] == "TIMEOUT" and "test_b" in rows["test_hang.py"][1]
+
+
 def test_network_is_blocked_after_lock(tmp_path):
     probe = "python -c \"import urllib.request as u; u.urlopen('https://pypi.org', timeout=5)\""
     with Sandbox(tmp_path) as sb:

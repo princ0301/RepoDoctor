@@ -1,0 +1,1 @@
+{"Pallets/Werkzeug": {"ignore": ["tests/test_serving.py"]}}

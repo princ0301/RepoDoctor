@@ -248,6 +248,11 @@ def test_cases_and_specs_round_trip(tmp_path):
             None,
             "explore_failed",
         ),
+        (
+            {"error": "The baseline test run produced no report (timeout):\nlog"},
+            None,
+            "baseline_failed",
+        ),
         ({"error": "Dependency install failed (exit 1)"}, None, "setup_error"),
         ({"success": False}, None, "fix_failed"),
         ({"success": True}, None, "grading_error"),
@@ -311,6 +316,11 @@ def test_setup_errors_without_model_calls_are_infrastructure_failures():
     assert not is_infrastructure_failure(result(outcome="fix_failed"))
 
 
+def test_a_failed_baseline_is_not_a_transient_infrastructure_failure():
+    assert is_infrastructure_failure(result(outcome="setup_error"))
+    assert not is_infrastructure_failure(result(outcome="baseline_failed"))
+
+
 def test_summarize_reports_rates_and_precision():
     out = summarize([result(), result("o__r-6", outcome="wrong_fix")])
     assert "1/2 (50%)" in out
@@ -326,6 +336,12 @@ def test_compare_reports_per_case_and_totals():
     assert "A 1/2   B 2/2" in out
     assert "B better in 1, worse in 0, same in 1" in out
     assert "A 1/2   B 0/0" in out
+
+
+def test_compare_counts_runs_that_reached_the_agent():
+    a = [result("x", 1), result("y", 1, "setup_error", success=False)]
+    a[0].llm_calls = 12
+    assert "Runs that reached the agent: A 1/1 resolved   B 1/1 resolved" in compare(a, a)
 
 
 def test_summarize_reports_tests_the_agent_could_not_see():

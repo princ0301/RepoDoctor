@@ -10,6 +10,7 @@ from repodoctor.config import Settings
 from repodoctor.evals.cases import CaseSpec, EvalCase, case_id, is_test_file, is_test_path
 from repodoctor.tools.github import PRFile, fetch_issue, fetch_pr, list_pr_files
 from repodoctor.tools.issue_ref import IssueRef, check_allowed
+from repodoctor.tools.repo_config import ignored_paths, with_ignores
 from repodoctor.tools.repo import (
     checkout_commit,
     clone_issue_repo,
@@ -104,6 +105,7 @@ def build_case(
     info = detect_project(dest)
     if not info.supported:
         raise CaseRejected(f"unsupported project: {info.reason}")
+    info = with_ignores(info, ignored_paths(spec.repo))
 
     ensure_image()
     step_timeout = settings.build_step_timeout_s

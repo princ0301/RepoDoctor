@@ -253,6 +253,21 @@ class Sandbox:
         except ValueError:
             return result, None
 
+    def time_test_files(self, info: ProjectInfo, per_file_timeout: int = 90):
+        """Yield (path, seconds, status, last_line) for every test module, run separately.
+
+        last_line is the last line pytest printed; for a timeout it names the test that hung."""
+        listing = self.run("find . -name 'test_*.py' -not -path './.git/*' | sort", 30)
+        for raw in listing.output.splitlines():
+            if not raw.endswith(".py"):
+                continue
+            path = raw.removeprefix("./")
+            cmd = " ".join(shlex.quote(a) for a in [*info.test_command, "-vv", path])
+            r = self.run(cmd, per_file_timeout)
+            status = "TIMEOUT" if r.timed_out else ("ok" if r.ok else f"exit {r.exit_code}")
+            lines = r.output.strip().splitlines()
+            yield path, r.duration_s, status, (lines[-1] if r.timed_out and lines else "")
+
     def destroy(self) -> None:
         if self.name:
             _docker("rm", "-f", self.name, check=False)

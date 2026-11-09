@@ -64,6 +64,7 @@ from repodoctor.tools.repo import (
     remove_dir,
     run_git,
 )
+from repodoctor.tools.repo_config import ignored_paths, with_ignores
 from repodoctor.tools.sandbox import Sandbox, SandboxError, ensure_image, image_exists
 
 # Loads .env into os.environ so LangSmith picks up LANGSMITH_* variables
@@ -105,7 +106,7 @@ def _clone_and_detect(ref: IssueRef) -> tuple[Path, ProjectInfo]:
     except GitError as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
-    return dest, detect_project(dest)
+    return dest, with_ignores(detect_project(dest), ignored_paths(ref.full_name))
 
 
 def _print_result(final: dict, settings: Settings) -> None:
@@ -249,7 +250,14 @@ def inspect_repo(url: str) -> None:
 
 
 @app.command()
-def smoke(url: str) -> None:
+def smoke(
+    url: str,
+    durations: int = typer.Option(0, "--durations", help="Also print the N slowest tests"),
+    per_file: bool = typer.Option(
+        False, "--per-file", help="Run every test file separately and print its time"
+    ),
+    per_file_timeout: int = typer.Option(90, "--per-file-timeout"),
+) -> None:
     """Run the repo's own test suite in the sandbox and record the baseline."""
     ref = _resolve_issue(url)
     dest, info = _clone_and_detect(ref)
@@ -274,7 +282,14 @@ def smoke(url: str) -> None:
                 raise typer.Exit(3)
             sb.lock_network()
             typer.echo("Running tests (network off) ...")
-            r, report = sb.run_suite(info, timeout=s.sandbox_timeout_s)
+            if per_file:
+                for path, secs, status, last in sb.time_test_files(info, per_file_timeout):
+                    typer.echo(f"{secs:6.0f}s  {status:<8} {path}")
+                    if last:
+                        typer.echo(f"          stuck at: {last[:150]}")
+                return
+            extra = ["--durations", str(durations)] if durations else None
+            r, report = sb.run_suite(info, args=extra, timeout=s.sandbox_timeout_s)
     except SandboxError as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
@@ -292,6 +307,8 @@ def smoke(url: str) -> None:
         f"Baseline: {report.total} tests | {report.passed} passed, {report.failed} failed, "
         f"{report.errors} errors, {report.skipped} skipped | {r.duration_s:.0f}s"
     )
+    if durations:
+        typer.echo(r.output)
     if report.clean:
         typer.echo("Result: CLEAN baseline")
         return
@@ -518,7 +535,7 @@ def _case_flags() -> dict[str, str]:
 
 
 def _excluded_ids() -> set[str]:
-    return {cid for cid, tag in _case_flags().items() if tag == "spec"}
+    return {cid for cid, tag in _case_flags().items() if tag in ("spec", "infra")}
 
 
 def _scope_ids() -> set[str]:
@@ -709,6 +726,10 @@ def eval_run(
                 "fix_context_rounds": settings.fix_context_rounds,
                 "run_timeout_s": settings.run_timeout_s,
                 "repodoctor_commit": _code_version(),
+                "repo_overrides": (
+                    json.loads(Path("evals/repo_overrides.json").read_text(encoding="utf-8"))
+                    if Path("evals/repo_overrides.json").exists() else {}
+                ),
             }, indent=2),
             encoding="utf-8",
         )

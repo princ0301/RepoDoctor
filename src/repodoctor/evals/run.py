@@ -81,7 +81,9 @@ class CaseResult:
 
 
 def is_infrastructure_failure(r: CaseResult) -> bool:
-    """The models were unavailable, or the run never reached the agent (no model call)."""
+    """Transient: the models were unavailable, or setup failed before any model call
+    (for example an install). A baseline test run that fails is deterministic for a
+    case, so it is a separate outcome ('baseline_failed') and does not stop a pass."""
     return r.outcome == "model_error" or (r.outcome == "setup_error" and r.llm_calls == 0)
 
 
@@ -114,6 +116,8 @@ def classify(final: dict, grade: dict | None) -> str:
             return "model_error"
         if "explorer did not" in err:
             return "explore_failed"
+        if err.startswith("The baseline test run"):
+            return "baseline_failed"
         return "setup_error"
     if not final.get("success"):
         return "fix_failed"
@@ -266,9 +270,20 @@ def compare(
         mine = [r for r in rs if r.case_id == cid]
         return sum(r.resolved for r in mine), len(mine)
 
+    def attempts(rs: list[CaseResult]) -> list[dict]:
+        return [h for r in rs for h in r.history]
+
     def no_edit(rs: list[CaseResult]) -> tuple[int, int]:
-        attempts = [h for r in rs for h in r.history]
-        return sum(1 for h in attempts if not h.get("edits")), len(attempts)
+        at = attempts(rs)
+        return sum(1 for h in at if not h.get("edits")), len(at)
+
+    def used_rounds(rs: list[CaseResult]) -> tuple[int, int]:
+        at = attempts(rs)
+        return sum(1 for h in at if h.get("context_rounds", 0) > 0), len(at)
+
+    def reached(rs: list[CaseResult]) -> tuple[int, int]:
+        agent = [r for r in rs if r.llm_calls > 0]
+        return sum(r.resolved for r in agent), len(agent)
 
     lines = [f"{'case':<40} {names[0]:>7} {names[1]:>7}"]
     better = worse = same = 0
@@ -281,12 +296,18 @@ def compare(
             worse += fb < fa
             same += fb == fa
     (ea, ta), (eb, tb) = no_edit(a), no_edit(b)
+    (ua, _), (ub, _) = used_rounds(a), used_rounds(b)
+    (xa, ya), (xb, yb) = reached(a), reached(b)
     lines += [
         "",
         f"Resolved runs:      {names[0]} {sum(r.resolved for r in a)}/{len(a)}   "
         f"{names[1]} {sum(r.resolved for r in b)}/{len(b)}",
+        f"Runs that reached the agent: {names[0]} {xa}/{ya} resolved   "
+        f"{names[1]} {xb}/{yb} resolved",
         f"Cases by resolve rate: {names[1]} better in {better}, worse in {worse}, same in {same}",
         f"Fix attempts with no edit: {names[0]} {ea}/{ta}   {names[1]} {eb}/{tb}",
+        f"Fix attempts that used a free file-request round: "
+        f"{names[0]} {ua}/{ta}   {names[1]} {ub}/{tb}",
     ]
     return "\n".join(lines)
 

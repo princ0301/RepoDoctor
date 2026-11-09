@@ -20,6 +20,7 @@ from repodoctor.tools.github import (
 )
 from repodoctor.tools.issue_ref import IssueRef
 from repodoctor.tools.policy import policy_mentions
+from repodoctor.tools.repo_config import ignored_paths, with_ignores
 from repodoctor.tools.repo import (
     ProjectInfo,
     checkout_commit,
@@ -120,10 +121,12 @@ def execute(
     metadata: dict,
     post: PostHook | None = None,
     progress: Callable[[str], None] | None = None,
+    repo: str | None = None,
 ) -> dict:
     info = detect_project(workdir)
     if not info.supported:
         raise RunnerError(f"unsupported project: {info.reason}")
+    info = with_ignores(info, ignored_paths(repo) if repo else [])
 
     # Build models first: config and credential problems should fail before Docker starts.
     tools = make_search_tools(workdir)
@@ -235,5 +238,6 @@ def run_fix_issue(
         metadata={"repo": ref.full_name, "issue": ref.number, "replay": replay},
         post=post,
         progress=progress,
+        repo=ref.full_name,
     )
     return final, IntakeInfo(issue.state, pr.url if pr else None, hits)
