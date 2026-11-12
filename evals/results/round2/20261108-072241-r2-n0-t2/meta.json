@@ -1,0 +1,38 @@
+{
+  "label": "r2-n0-t2",
+  "trials": 1,
+  "split": "heldout",
+  "cases": [
+    "pallets__click-2632",
+    "pallets__click-2697",
+    "prettytable__prettytable-290",
+    "prettytable__prettytable-129",
+    "python-humanize__humanize-17",
+    "python-humanize__humanize-12",
+    "pallets__werkzeug-3318",
+    "pallets__werkzeug-3294",
+    "pallets__werkzeug-3271",
+    "pallets__flask-5636",
+    "pallets__werkzeug-3121",
+    "pallets__werkzeug-3108",
+    "pallets__werkzeug-3007",
+    "pallets__werkzeug-3075",
+    "pallets__flask-5472",
+    "pallets__flask-5504",
+    "pallets__werkzeug-3146",
+    "pallets__werkzeug-3142",
+    "pallets__werkzeug-3127"
+  ],
+  "llm_explore": "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b",
+  "llm_fix": "nvidia:nvidia/nemotron-3.5-super-vl-120b-a12b",
+  "llm_fallbacks": [
+    "openrouter:nvidia/nemotron-3.5-super-vl:free"
+  ],
+  "max_attempts": 3,
+  "repro_max_attempts": 3,
+  "allow_test_updates": false,
+  "fix_context_chars": 240000,
+  "fix_context_rounds": 0,
+  "run_timeout_s": 900,
+  "repodoctor_commit": "8849122"
+}

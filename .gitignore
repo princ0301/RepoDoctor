@@ -15,3 +15,4 @@ pytest-tmp/
 test-tmp/
 test-tmp-fixer/
 .pytest-tmp*/
+.pytest-tmp*/
