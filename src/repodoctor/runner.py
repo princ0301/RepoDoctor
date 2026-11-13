@@ -54,6 +54,7 @@ class IntakeInfo:
     issue_state: str
     fixing_pr_url: str | None  # set in --replay mode
     policy_hits: list[str]
+    workdir: Path | None = None
 
 
 def parse_issue_file(text: str) -> tuple[str, str]:
@@ -240,4 +241,4 @@ def run_fix_issue(
         progress=progress,
         repo=ref.full_name,
     )
-    return final, IntakeInfo(issue.state, pr.url if pr else None, hits)
+    return final, IntakeInfo(issue.state, pr.url if pr else None, hits, dest)

@@ -34,6 +34,8 @@ class IssueData:
     comments: list[str]        # "user: text"
     is_pull_request: bool
     closed_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
 
 
 @dataclass
@@ -46,6 +48,20 @@ class FixingPR:
     head_sha: str = ""
     created_at: str = ""
 
+@dataclass
+class LinkedPR:
+    number: int
+    state: str            # "open" | "closed"
+    merged: bool
+    closes_issue: bool    # its description uses a closing keyword for this issue
+    url: str
+
+@dataclass
+class RepoInfo:
+    default_branch: str
+    archived: bool
+    disabled: bool
+    private: bool
 
 def github_client(
     token: str = "", transport: httpx.BaseTransport | None = None
@@ -89,10 +105,7 @@ def _get(client: httpx.Client, path: str, **params):
     return r.json()
 
 
-def fetch_issue(client: httpx.Client, ref: IssueRef) -> IssueData:
-    base = f"/repos/{ref.full_name}/issues/{ref.number}"
-    d = _get(client, base)
-    comments = _get(client, f"{base}/comments", per_page=MAX_COMMENTS)
+def parse_issue(d: dict, comments: list[str] | None = None) -> IssueData:
     return IssueData(
         url=d.get("html_url", ""),
         title=d.get("title", ""),
@@ -100,13 +113,43 @@ def fetch_issue(client: httpx.Client, ref: IssueRef) -> IssueData:
         state=d.get("state", ""),
         labels=[x["name"] for x in d.get("labels", []) if isinstance(x, dict)],
         assignees=[a["login"] for a in d.get("assignees", [])],
-        comments=[
-            f"{(c.get('user') or {}).get('login', '?')}: {c.get('body') or ''}"
-            for c in comments[:MAX_COMMENTS]
-        ],
+        comments=list(comments or []),
         is_pull_request="pull_request" in d,
-        closed_at=d.get("closed_at") or "",
+        created_at=d.get("created_at") or "",
+        updated_at=d.get("updated_at") or "",
     )
+
+
+def fetch_issue(client: httpx.Client, ref: IssueRef) -> IssueData:
+    base = f"/repos/{ref.full_name}/issues/{ref.number}"
+    d = _get(client, base)
+    raw = _get(client, f"{base}/comments", per_page=MAX_COMMENTS)
+    comments = [
+        f"{(c.get('user') or {}).get('login', '?')}: {c.get('body') or ''}"
+        for c in raw[:MAX_COMMENTS]
+    ]
+    return parse_issue(d, comments)
+
+
+def list_open_issues(
+    client: httpx.Client, full_name: str, limit: int = 30
+) -> list[tuple[int, IssueData]]:
+    """Open, unassigned issues (no pull requests), most recently updated first."""
+    out: list[tuple[int, IssueData]] = []
+    for page in range(1, 6):
+        batch = _get(
+            client, f"/repos/{full_name}/issues",
+            state="open", assignee="none", sort="updated", direction="desc",
+            per_page=100, page=page,
+        )
+        for d in batch:
+            if "pull_request" not in d:
+                out.append((d["number"], parse_issue(d)))
+                if len(out) >= limit:
+                    return out
+        if len(batch) < 100:
+            break
+    return out
 
 
 def fetch_pr_text(client: httpx.Client, ref: IssueRef, number: int) -> tuple[str, str]:
@@ -272,3 +315,34 @@ def list_merged_prs(client: httpx.Client, full_name: str, max_prs: int = 200) ->
 def closed_issue_numbers(text: str) -> list[int]:
     """Issue numbers a PR description closes ('Fixes #12', 'Closes #3')."""
     return sorted(_closed_numbers(text))
+
+def fetch_comments(client: httpx.Client, ref: IssueRef, limit: int = 100) -> list[tuple[str, str]]:
+    data = _get(
+        client, f"/repos/{ref.full_name}/issues/{ref.number}/comments", per_page=min(limit, 100)
+    )
+    return [((c.get("user") or {}).get("login", "?"), c.get("body") or "") for c in data[:limit]]
+
+def linked_pull_requests(client: httpx.Client, ref: IssueRef) -> list[LinkedPR]:
+    """Pull requests of the same repo that mention the issue (from its timeline)."""
+    out: list[LinkedPR] = []
+    for n in _candidate_numbers(client, ref, _timeline(client, ref)):
+        pr = _get(client, f"/repos/{ref.full_name}/pulls/{n}")
+        out.append(
+            LinkedPR(
+                number=n,
+                state=pr.get("state", ""),
+                merged=bool(pr.get("merged")),
+                closes_issue=ref.number in _closed_numbers(pr.get("body") or ""),
+                url=pr.get("html_url", ""),
+            )
+        )
+    return out
+
+def fetch_repo_info(client: httpx.Client, full_name: str) -> RepoInfo:
+    d = _get(client, f"/repos/{full_name}")
+    return RepoInfo(
+        default_branch=d.get("default_branch") or "main",
+        archived=bool(d.get("archived")),
+        disabled=bool(d.get("disabled")),
+        private=bool(d.get("private")),
+    )

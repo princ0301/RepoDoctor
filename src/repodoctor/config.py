@@ -45,6 +45,13 @@ class Settings(BaseSettings):
     # --- Paths ---
     work_dir: Path = Path(".repodoctor/work")   # where repos get cloned (gitignored)
 
+    # --- PR preparation ---
+    prs_dir: Path = Path(".repodoctor/prs")
+    pr_max_diff_lines: int = 300
+    pr_max_files: int = 8
+    git_author_name: str = ""     # default: your GitHub username
+    git_author_email: str = ""    # default: <username>@users.noreply.github.com
+
     @property
     def allowed_repo_list(self) -> list[str]:
         return [r.strip() for r in self.allowed_repos.split(",") if r.strip()]

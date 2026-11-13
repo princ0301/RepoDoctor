@@ -21,17 +21,25 @@ _AI = re.compile(
 MAX_FILE_BYTES = 200_000
 
 
-def policy_mentions(root: Path, max_hits: int = 8) -> list[str]:
+def scan_text(rel: str, text: str, max_hits: int = 8) -> list[str]:
     """Lines like 'CONTRIBUTING.md:12: text' that mention AI/LLMs."""
+    hits: list[str] = []
+    for n, line in enumerate(text.splitlines(), 1):
+        if _AI.search(line):
+            hits.append(f"{rel}:{n}: {line.strip()[:200]}")
+            if len(hits) >= max_hits:
+                break
+    return hits
+
+
+def policy_mentions(root: Path, max_hits: int = 8) -> list[str]:
     hits: list[str] = []
     for rel in POLICY_FILES:
         p = root / rel
         if not p.is_file() or p.stat().st_size > MAX_FILE_BYTES:
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
-        for n, line in enumerate(text.splitlines(), 1):
-            if _AI.search(line):
-                hits.append(f"{rel}:{n}: {line.strip()[:200]}")
-                if len(hits) >= max_hits:
-                    return hits
+        hits += scan_text(rel, text, max_hits - len(hits))
+        if len(hits) >= max_hits:
+            return hits
     return hits

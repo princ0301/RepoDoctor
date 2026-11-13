@@ -154,16 +154,14 @@ def head_sha(root: Path) -> str:
     return run_git("rev-parse", "HEAD", cwd=root).strip()
 
 
-def commit_files(root: Path, paths: list[str], message: str) -> str:
-    """Commit exactly `paths` in the LOCAL work clone (nothing is pushed). Returns new HEAD.
-
-    The generated reproduction test is committed so `git reset --hard` between fix
-    attempts keeps it, while the agent's edits are still thrown away.
-    """
+def commit_files(
+    root: Path, paths: list[str], message: str, author: tuple[str, str] | None = None
+) -> str:
+    """Commit exactly `paths` in the LOCAL work clone (nothing is pushed). Returns new HEAD."""
+    name, email = author or ("RepoDoctor", "repodoctor@users.noreply.github.com")
     run_git("add", "-A", "--", *paths, cwd=root)
     run_git(
-        "-c", "user.name=RepoDoctor",
-        "-c", "user.email=repodoctor@users.noreply.github.com",
+        "-c", f"user.name={name}", "-c", f"user.email={email}",
         "commit", "-q", "--no-verify", "--no-gpg-sign", "-m", message,
         cwd=root,
     )

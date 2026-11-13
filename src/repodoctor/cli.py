@@ -56,6 +56,14 @@ from repodoctor.tools.issue_ref import (
     check_allowed,
     parse_issue_url,
 )
+from repodoctor.tools.pr_package import (
+    PackageError,
+    approve,
+    blocking_findings,
+    load_package,
+    prepare_package,
+    render_review,
+)
 from repodoctor.tools.repo import (
     GitError,
     ProjectInfo,
@@ -66,6 +74,7 @@ from repodoctor.tools.repo import (
 )
 from repodoctor.tools.repo_config import ignored_paths, with_ignores
 from repodoctor.tools.sandbox import Sandbox, SandboxError, ensure_image, image_exists
+from repodoctor.tools.triage import TriageResult, run_triage, scan_repo
 
 # Loads .env into os.environ so LangSmith picks up LANGSMITH_* variables
 load_dotenv()
@@ -393,12 +402,34 @@ def fix_issue(
         help="With --replay: number of the merged PR that fixed the issue "
         "(use it if it is not detected automatically)",
     ),
+    prepare_pr: bool = typer.Option(
+        False, "--prepare-pr",
+        help="After a successful run, write a pull-request package and review it (no push)",
+    ),
+    ignore_triage: bool = typer.Option(
+        False, "--ignore-triage",
+        help="Run the agent even if triage says skip (preparing a PR still needs a pass)",
+    ),
 ) -> None:
     """Run the fix loop on a real GitHub issue (repo must be in ALLOWED_REPOS)."""
     ref = _resolve_issue(url)
     settings = get_settings()
+    if prepare_pr and replay:
+        typer.echo(
+            "ERROR   --prepare-pr cannot be combined with --replay (replays are for evaluation)"
+        )
+        raise typer.Exit(1)
     if not settings.github_token:
         typer.echo("WARN    GITHUB_TOKEN not set: GitHub allows only 60 API requests/hour")
+    if not replay:
+        result = _run_triage(ref, settings)
+        _print_triage(result)
+        if result.report.verdict == "skip" and not ignore_triage:
+            typer.echo(
+                "\nTriage says skip: nothing was run. --ignore-triage runs the agent anyway."
+            )
+            raise typer.Exit(1)
+        typer.echo("")
     try:
         final, intake = run_fix_issue(
             ref, settings, replay=replay, targets=list(test or []), fix_pr=fix_pr,
@@ -413,6 +444,24 @@ def fix_issue(
     finally:
         if intake.fixing_pr_url:
             typer.echo(f"\nCompare with the real fix: {intake.fixing_pr_url}")
+
+    if prepare_pr:
+        fresh = _run_triage(ref, settings)
+        if fresh.report.verdict == "skip":
+            _print_triage(fresh)
+            typer.echo("ERROR   triage says skip now: no package prepared")
+            raise typer.Exit(1)
+        try:
+            pkg = prepare_package(
+                ref=ref, issue=fresh.issue, final=final, workdir=intake.workdir,
+                settings=settings, triage=fresh.report, repo_info=fresh.repo,
+                policy_hits=fresh.policy_hits,
+            )
+        except (PackageError, GitError) as e:
+            typer.echo(f"ERROR   {e}")
+            raise typer.Exit(1) from e
+        typer.echo(f"\nPackage written to {pkg}\n")
+        _review_flow(pkg, settings)
 
 @app.command("eval-discover")
 def eval_discover(
@@ -863,6 +912,123 @@ def eval_failures(
     for k in names:
         typer.echo(f"{k:<26} {unresolved_kinds[k]:>16} {resolved_kinds[k]:>14}")
     typer.echo("\n" + "\n".join(rows))
+
+
+def _run_triage(ref: IssueRef, settings: Settings) -> TriageResult:
+    try:
+        with github_client(settings.github_token) as client:
+            return run_triage(client, ref, me=settings.github_username)
+    except GitHubError as e:
+        typer.echo(f"ERROR   triage failed: {e}")
+        raise typer.Exit(1) from e
+
+
+def _print_triage(result: TriageResult) -> None:
+    typer.echo(f"TRIAGE: {result.report.verdict.upper()}")
+    for f in result.report.findings:
+        typer.echo(f"  [{f.level:<4}] {f.message}")
+    for hit in result.policy_hits[:5]:
+        typer.echo(f"  policy: {hit}")
+
+
+def _review_flow(pkg: Path, settings: Settings) -> None:
+    meta = load_package(pkg)
+    patch = (pkg / "change.patch").read_text(encoding="utf-8")
+    pr_text = (pkg / "pr.md").read_text(encoding="utf-8")
+    typer.echo(render_review(meta, patch, pr_text))
+    if blocking_findings(meta):
+        typer.echo("\nThis package cannot be approved: see the [skip] findings above.")
+        raise typer.Exit(1)
+    typer.echo(
+        f"\nEdit {pkg / 'pr.md'} now if you want to change the text. Approval records a hash "
+        "of the patch and the text, and any later edit invalidates it."
+    )
+    answer = typer.prompt(
+        f"Type the repository name ({meta['repo']}) to approve, or press Enter to stop",
+        default="", show_default=False,
+    )
+    if answer.strip() != meta["repo"]:
+        typer.echo("Not approved.")
+        return
+    acknowledged = True
+    if meta["policy_hits"]:
+        reply = typer.prompt(
+            "The project's contribution docs mention AI. Type 'read' to confirm you read them",
+            default="", show_default=False,
+        )
+        acknowledged = reply.strip().lower() == "read"
+        if not acknowledged:
+            typer.echo("Not approved.")
+            return
+    try:
+        approve(pkg, policy_acknowledged=acknowledged)
+    except PackageError as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    typer.echo(f"Approved: {pkg}")
+    typer.echo("There is no submit command yet, so nothing was pushed.")
+
+
+@app.command()
+def triage(url: str) -> None:
+    """Check whether an issue is a reasonable target (GitHub API only, no model calls)."""
+    result = _run_triage(_resolve_issue(url), get_settings())
+    _print_triage(result)
+    raise typer.Exit(1 if result.report.verdict == "skip" else 0)
+
+
+@app.command()
+def review(
+    package: Path = typer.Argument(..., exists=True, file_okay=False, help="A package folder"),
+) -> None:
+    """Review a prepared pull-request package and approve it (nothing is pushed)."""
+    _review_flow(package, get_settings())
+
+
+@app.command("triage-scan")
+def triage_scan(
+    repo: str,
+    limit: int = typer.Option(10, help="Show at most this many candidates"),
+    scan: int = typer.Option(30, help="How many recent open, unassigned issues to examine"),
+    show_skipped: bool = typer.Option(False, "--show-skipped", help="Also list skipped issues"),
+) -> None:
+    """List a repo's open issues with triage verdicts (GitHub API only, no model calls)."""
+    settings = get_settings()
+    owner, _, name = repo.partition("/")
+    try:
+        check_allowed(IssueRef(owner, name, 0), settings.allowed_repo_list)
+        with github_client(settings.github_token) as client:
+            result = scan_repo(client, repo, me=settings.github_username, scan=scan)
+    except (RepoNotAllowed, GitHubError) as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+
+    typer.echo(f"{repo} (default branch {result.repo.default_branch}): "
+               f"repository checks {result.repo_report.verdict.upper()}")
+    for f in result.repo_report.findings:
+        typer.echo(f"  [{f.level:<4}] {f.message}")
+    candidates = [r for r in result.rows if r.verdict != "skip"][:limit]
+    skipped = [r for r in result.rows if r.verdict == "skip"]
+    typer.echo("")
+    for r in candidates:
+        labels = f"  ({', '.join(r.labels)})" if r.labels else ""
+        typer.echo(f"{r.verdict:<5} #{r.number}  {r.title[:70]}{labels}")
+        for note in r.notes:
+            typer.echo(f"        - {note}")
+    if not candidates:
+        typer.echo("No candidates among the issues examined.")
+    typer.echo(f"\n{len(candidates)} candidate(s); {len(skipped)} skipped.")
+    if show_skipped:
+        for r in skipped:
+            typer.echo(f"skip  #{r.number}  {r.title[:70]}")
+            for note in r.notes:
+                typer.echo(f"        - {note}")
+    if candidates:
+        typer.echo(
+            "\nNext: uv run repodoctor fix-issue "
+            f"https://github.com/{repo}/issues/{candidates[0].number} --prepare-pr"
+        )
+
 
 if __name__ == "__main__":
     app()
