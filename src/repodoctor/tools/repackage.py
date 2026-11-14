@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from repodoctor.config import Settings
-from repodoctor.tools.diffcheck import check_diff, parse_diff, repo_line_length, syntax_findings
+from repodoctor.tools.diffcheck import (
+    check_diff,
+    parse_diff,
+    repo_line_length,
+    syntax_findings,
+    unused_import_findings,
+)
 from repodoctor.tools.findings import Finding
 from repodoctor.tools.paths import is_test_path
 from repodoctor.tools.pr_package import PackageError, load_package, save_package
@@ -20,7 +26,11 @@ from repodoctor.tools.repo import (
     run_git,
 )
 from repodoctor.tools.repo_config import ignored_paths, with_ignores
-from repodoctor.tools.review_hints import changelog_findings, hint_new_test_files
+from repodoctor.tools.review_hints import (
+    changelog_findings,
+    hint_new_test_files,
+    unknown_test_id,
+)
 from repodoctor.tools.sandbox import Sandbox
 from repodoctor.tools.testreport import SuiteReport, new_failures
 
@@ -54,6 +64,10 @@ def repackage(
         raise PackageError(f"the work clone is not on branch {meta['branch']}")
     base = meta["base_sha"]
     name, email = meta["author"]["name"], meta["author"]["email"]
+    tid = test_id or meta["evidence"]["test_id"]
+    problem = unknown_test_id(root, tid)   # before anything is changed
+    if problem:
+        raise PackageError(f"{problem} Pass --test FILE::NAME for the test as it is now.")
 
     # Fold every edit in the clone into the single commit.
     run_git("add", "-A", cwd=root)
@@ -67,9 +81,6 @@ def repackage(
     if not files:
         raise PackageError("no changes are left in the work clone")
 
-    tid = test_id or meta["evidence"]["test_id"]
-    if not (root / tid.partition("::")[0]).is_file():
-        raise PackageError(f"{tid.partition('::')[0]} does not exist: pass --test with the new id")
     sources = [f for f in files if not is_test_path(f)]
     if not sources:
         raise PackageError("the change touches no source file, only tests")
@@ -97,7 +108,14 @@ def repackage(
             finally:
                 run_git("checkout", head, "--", *modified, cwd=root)
             fails_before = res.exit_code == 1 and not res.timed_out
-            if not fails_before:
+            if res.exit_code in (2, 3, 4, 5):
+                fails_before = None
+                findings.append(Finding(
+                    "skip", "test_not_runnable",
+                    f"pytest could not run {tid} without the source change "
+                    f"(exit {res.exit_code}). Check the test id.",
+                ))
+            elif not fails_before:
                 findings.append(Finding(
                     "skip", "test_does_not_fail_without_fix",
                     f"Without the source change the test did not fail (exit {res.exit_code}), "
@@ -112,7 +130,12 @@ def repackage(
 
         res, _ = sb.run_suite(info, args=[tid], timeout=timeout)
         passes = res.ok
-        if not passes:
+        if res.exit_code in (2, 3, 4, 5):
+            findings.append(Finding(
+                "skip", "test_not_runnable",
+                f"pytest could not run {tid} (exit {res.exit_code}). Check the test id.",
+            ))
+        elif not passes:
             findings.append(Finding("skip", "test_fails_with_fix", f"{tid} does not pass."))
 
         _, report = sb.run_suite(info, timeout=timeout)
@@ -136,6 +159,7 @@ def repackage(
         secrets=(settings.nvidia_api_key, settings.openrouter_api_key, settings.github_token),
     )
     style.extend(syntax_findings(root, files))
+    style.extend(unused_import_findings(root, diff))
     style.extend(changelog_findings(root, files))
     style.extend(hint_new_test_files(
         root, [p for p in added_files(root, base) if is_test_path(p)]

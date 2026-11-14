@@ -257,3 +257,22 @@ def test_repackage_refuses_when_the_clone_is_on_another_branch(run, tmp_path):
     run_git("checkout", "-q", "-b", "other", cwd=load_package(pkg)["workdir"])
     with pytest.raises(PackageError, match="not on branch"):
         repackage(pkg, settings(tmp_path), sandbox_factory=lambda _root: FakeSandbox([], None))
+
+
+def test_repackage_rejects_an_unknown_test_id_without_touching_the_package(run, tmp_path):
+    pkg = prepare(run, tmp_path)
+    before = ((pkg / "pr.md").read_bytes(), load_package(pkg))
+    with pytest.raises(PackageError, match="not a test in"):
+        repackage(
+            pkg, settings(tmp_path), test_id="tests/test_issue_5.py::test_nope",
+            sandbox_factory=lambda _root: FakeSandbox([], None),
+        )
+    assert ((pkg / "pr.md").read_bytes(), load_package(pkg)) == before
+
+
+def test_repackage_says_when_pytest_cannot_run_the_test(run, tmp_path):
+    pkg = prepare(run, tmp_path)
+    sb = FakeSandbox(target=[4, 4], suite=SuiteReport(total=3, passed=3))
+    meta = repackage(pkg, settings(tmp_path), sandbox_factory=lambda _root: sb)
+    codes = {f["code"] for f in blocking_findings(meta)}
+    assert "test_not_runnable" in codes and "test_does_not_fail_without_fix" not in codes

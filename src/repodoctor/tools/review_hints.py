@@ -87,3 +87,39 @@ def hint_new_test_files(root: Path, new_tests: list[str]) -> list[Finding]:
                 f"functions in: {shown}. Tests are usually kept with the existing ones.",
             ))
     return out
+
+def list_test_ids(root: Path, rel: str) -> list[str]:
+    """Test ids defined in a file: top-level test functions and methods of Test* classes."""
+    path = root / rel
+    if not path.is_file():
+        return []
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        return []
+
+    def is_test(n: ast.AST) -> bool:
+        return isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name.startswith("test")
+
+    ids: list[str] = []
+    for node in tree.body:
+        if is_test(node):
+            ids.append(f"{rel}::{node.name}")
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            ids += [f"{rel}::{node.name}::{n.name}" for n in node.body if is_test(n)]
+    return ids
+
+
+def unknown_test_id(root: Path, test_id: str) -> str | None:
+    """None if the id names something that exists; otherwise a message saying what is wrong."""
+    rel = test_id.partition("::")[0]
+    if not (root / rel).is_file():
+        return f"{rel} does not exist."
+    if "::" not in test_id:
+        return None   # a whole file
+    base = test_id.split("[", 1)[0]
+    known = list_test_ids(root, rel)
+    if base in known:
+        return None
+    names = ", ".join(k.partition("::")[2] for k in known[:10]) or "none"
+    return f"{base.partition('::')[2]} is not a test in {rel} (tests there: {names})."

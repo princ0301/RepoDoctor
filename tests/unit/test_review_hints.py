@@ -3,6 +3,7 @@ from repodoctor.tools.review_hints import (
     find_changelog,
     hint_new_test_files,
     suggest_test_homes,
+    unknown_test_id,
 )
 
 
@@ -49,3 +50,15 @@ def test_hint_new_test_files_names_a_better_home(tmp_path):
     (finding,) = hint_new_test_files(tmp_path, ["tests/test_issue_9.py"])
     assert finding.code == "new_test_file" and "tests/test_split.py" in finding.message
     assert hint_new_test_files(tmp_path, []) == []
+
+
+def test_unknown_test_id_names_the_tests_that_do_exist(tmp_path):
+    (tmp_path / "t.py").write_text(
+        "def test_a():\n    pass\n\n\nclass TestB:\n    def test_c(self):\n        pass\n"
+    )
+    assert unknown_test_id(tmp_path, "t.py::test_a") is None
+    assert unknown_test_id(tmp_path, "t.py::TestB::test_c[1]") is None
+    assert unknown_test_id(tmp_path, "t.py") is None
+    msg = unknown_test_id(tmp_path, "t.py::test_nope")
+    assert "test_nope is not a test in t.py" in msg and "test_a" in msg
+    assert unknown_test_id(tmp_path, "missing.py::test_a") == "missing.py does not exist."

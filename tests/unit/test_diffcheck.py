@@ -5,6 +5,7 @@ from repodoctor.tools.diffcheck import (
     parse_diff,
     repo_line_length,
     syntax_findings,
+    unused_import_findings,
 )
 
 HEAD = [
@@ -120,3 +121,15 @@ def test_syntax_errors_are_reported(tmp_path):
     (tmp_path / "bad.py").write_text("def f(:\n")
     found = syntax_findings(tmp_path, ["ok.py", "bad.py", "missing.py", "notes.md"])
     assert [f.code for f in found] == ["syntax_error"] and "bad.py" in found[0].message
+
+
+def test_only_unused_imports_added_by_the_change_are_reported(tmp_path):
+    (tmp_path / "t.py").write_text(
+        "import os\nimport pytest\n\nimport sqlparse\n\n\ndef test_a():\n    sqlparse.split('a')\n"
+    )
+    d = "\n".join([
+        "diff --git a/t.py b/t.py", "--- a/t.py", "+++ b/t.py", "@@ -1,2 +1,3 @@",
+        " import os", "+import pytest", " ", "+import sqlparse",
+    ]) + "\n"
+    found = unused_import_findings(tmp_path, d)
+    assert [f.message for f in found] == ["t.py:2: 'pytest' is imported but not used."]

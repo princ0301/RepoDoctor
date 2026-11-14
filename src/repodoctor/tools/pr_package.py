@@ -7,7 +7,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from repodoctor.config import Settings
-from repodoctor.tools.diffcheck import check_diff, parse_diff, repo_line_length, syntax_findings
+from repodoctor.tools.diffcheck import (
+    check_diff,
+    parse_diff,
+    repo_line_length,
+    syntax_findings,
+    unused_import_findings,
+)
 from repodoctor.tools.findings import Report
 from repodoctor.tools.github import IssueData, RepoInfo
 from repodoctor.tools.issue_ref import IssueRef
@@ -148,6 +154,7 @@ def prepare_package(
         secrets=(settings.nvidia_api_key, settings.openrouter_api_key, settings.github_token),
     )
     style.extend(syntax_findings(clone, paths))
+    style.extend(unused_import_findings(clone, diff))
     style.extend(changelog_findings(clone, paths))
     new_tests = [p for p in added_files(clone, base_sha) if is_test_path(p)]
     style.extend(hint_new_test_files(clone, new_tests))
@@ -263,7 +270,8 @@ def render_review(meta: dict, patch: str, pr_text: str) -> str:
             f"  Tests that newly fail: {len(v['new_failures'])}",
         ])
     out += section("EVIDENCE", [
-        f"  New test: {ev['test_id']} (accepted only because it failed on the unmodified code)",
+        f"  New test: {ev['test_id']} "
+        f"({'re-verified by repackage' if v else 'accepted by the agent because it failed on the unmodified code'})",
         f"  Fix attempts: {ev['fix_attempts']}; reproduction attempts: {ev['repro_attempts']}",
         f"  Baseline suite: {base['total']} tests, {base['passed']} passed, "
         f"{(base['failed'] or 0) + (base['errors'] or 0)} already failing (ignored)",

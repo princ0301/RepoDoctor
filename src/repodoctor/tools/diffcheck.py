@@ -204,3 +204,33 @@ def check_diff(
             f"{len(p.no_eol)} file(s) end without a newline (first: {p.no_eol[0].path}).",
         )
     return r
+
+def unused_import_findings(root: Path, diff: str) -> list[Finding]:
+    """Imports added by this change that nothing uses (the project's linter will say so)."""
+    added: dict[str, set[int]] = {}
+    for a in parse_diff(diff).added:
+        added.setdefault(a.path, set()).add(a.line)
+    out: list[Finding] = []
+    for rel, lines in added.items():
+        p = root / rel
+        if not rel.endswith(".py") or rel.endswith("__init__.py") or not p.is_file():
+            continue
+        try:
+            tree = ast.parse(p.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [(a.asname or a.name).split(".")[0] for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module != "__future__":
+                names = [a.asname or a.name for a in node.names if a.name != "*"]
+            else:
+                continue
+            if node.lineno not in lines:
+                continue
+            out += [
+                Finding("warn", "unused_import", f"{rel}:{node.lineno}: '{n}' is imported but not used.")
+                for n in names if n not in used
+            ]
+    return out
