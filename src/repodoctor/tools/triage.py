@@ -21,6 +21,7 @@ from repodoctor.tools.github import (
     fetch_repo_info,
     linked_pull_requests,
     list_open_issues,
+    list_recent_threads,
 )
 from repodoctor.tools.issue_ref import IssueRef
 from repodoctor.tools.policy import POLICY_FILES, scan_text
@@ -57,6 +58,33 @@ _POLICY_BLOCK = re.compile(
     r"|\bno (?:ai|llm)\b",
     re.I,
 )
+_AI_TITLE = re.compile(
+    r"\b(?:ai|llms?|gpt|chatgpt|copilot|claude|slop|spam)\b"
+    r"|(?<!user )(?<!user-)\bagents?\b|\bbots?\b",
+    re.I,
+)
+
+
+def ai_thread_findings(threads: list[tuple[int, str, bool]]) -> tuple[list[str], list[Finding]]:
+    hits = [
+        f"#{n} {'(pull request) ' if is_pr else ''}{title}"
+        for n, title, is_pr in threads if _AI_TITLE.search(title)
+    ]
+    if not hits:
+        return [], []
+    more = f" (+{len(hits) - 1} more)" if len(hits) > 1 else ""
+    return hits[:5], [Finding(
+        "warn", "ai_threads",
+        f"Recent issues or pull requests discuss AI, agents or bots; read them before "
+        f"contributing: {hits[0]}{more}",
+    )]
+
+
+def _ai_threads(client: httpx.Client, full_name: str) -> tuple[list[str], list[Finding]]:
+    try:
+        return ai_thread_findings(list_recent_threads(client, full_name))
+    except GitHubError:
+        return [], []
 
 
 def _parse_time(value: str) -> datetime | None:
@@ -187,6 +215,7 @@ class TriageResult:
     issue: IssueData
     repo: RepoInfo
     policy_hits: list[str]
+    ai_threads: list[str]
 
 
 def run_triage(
@@ -202,12 +231,14 @@ def run_triage(
     comments = fetch_comments(client, ref) if open_issue else []
     report.extend(triage_issue(issue, comments, me=me, now=now).findings)
     if report.verdict == "skip":
-        return TriageResult(report, issue, repo, [])
+        return TriageResult(report, issue, repo, [], [])
 
     report.extend(triage_links(linked_pull_requests(client, ref)).findings)
     hits = remote_policy_hits(client, ref, repo.default_branch)
     report.extend(policy_findings(hits))
-    return TriageResult(report, issue, repo, hits)
+    threads, thread_findings = _ai_threads(client, ref.full_name)
+    report.extend(thread_findings)
+    return TriageResult(report, issue, repo, hits, threads)
 
 
 @dataclass
@@ -225,6 +256,7 @@ class ScanResult:
     repo_report: Report
     policy_hits: list[str]
     rows: list[ScanRow]   # ok first, then warn, then skip; recent first within each
+    ai_threads: list[str]
 
 
 _ORDER = {"ok": 0, "warn": 1, "skip": 2}
@@ -248,11 +280,14 @@ def scan_repo(
     repo = fetch_repo_info(client, full_name)
     repo_report = triage_repo(repo)
     hits: list[str] = []
+    threads: list[str] = []
     if repo_report.verdict != "skip":
         hits = remote_policy_hits(client, IssueRef(owner, name, 0), repo.default_branch)
         repo_report.extend(policy_findings(hits))
+        threads, thread_findings = _ai_threads(client, full_name)
+        repo_report.extend(thread_findings)
     if repo_report.verdict == "skip":
-        return ScanResult(repo, repo_report, hits, [])
+        return ScanResult(repo, repo_report, hits, [], threads)
 
     rows: list[ScanRow] = []
     for number, issue in list_open_issues(client, full_name, scan):
@@ -268,4 +303,4 @@ def scan_repo(
             [f.message for f in report.findings if f.level in ("warn", "skip")],
         ))
     rows.sort(key=lambda r: _ORDER[r.verdict])   # stable: keeps most-recent-first
-    return ScanResult(repo, repo_report, hits, rows)
+    return ScanResult(repo, repo_report, hits, rows, threads)

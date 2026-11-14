@@ -64,6 +64,7 @@ from repodoctor.tools.pr_package import (
     prepare_package,
     render_review,
 )
+from repodoctor.tools.repackage import repackage as repackage_package
 from repodoctor.tools.repo import (
     GitError,
     ProjectInfo,
@@ -456,6 +457,7 @@ def fix_issue(
                 ref=ref, issue=fresh.issue, final=final, workdir=intake.workdir,
                 settings=settings, triage=fresh.report, repo_info=fresh.repo,
                 policy_hits=fresh.policy_hits,
+                ai_threads=fresh.ai_threads,
             )
         except (PackageError, GitError) as e:
             typer.echo(f"ERROR   {e}")
@@ -929,6 +931,8 @@ def _print_triage(result: TriageResult) -> None:
         typer.echo(f"  [{f.level:<4}] {f.message}")
     for hit in result.policy_hits[:5]:
         typer.echo(f"  policy: {hit}")
+    for t in result.ai_threads[:3]:
+        typer.echo(f"  ai-thread: {t}")
 
 
 def _review_flow(pkg: Path, settings: Settings) -> None:
@@ -951,9 +955,10 @@ def _review_flow(pkg: Path, settings: Settings) -> None:
         typer.echo("Not approved.")
         return
     acknowledged = True
-    if meta["policy_hits"]:
+    if meta["policy_hits"] or meta.get("ai_threads"):
         reply = typer.prompt(
-            "The project's contribution docs mention AI. Type 'read' to confirm you read them",
+            "The project's docs or recent threads mention AI or automated contributions "
+            "(see above). Type 'read' to confirm you read them",
             default="", show_default=False,
         )
         acknowledged = reply.strip().lower() == "read"
@@ -985,6 +990,29 @@ def review(
     _review_flow(package, get_settings())
 
 
+@app.command("repackage")
+def repackage_cmd(
+    package: Path = typer.Argument(..., exists=True, file_okay=False, help="A package folder"),
+    test: str | None = typer.Option(
+        None, "--test", help="The new test id, if you moved or renamed the test"
+    ),
+) -> None:
+    """After editing files in the package's clone: rebuild the commit and patch and re-verify."""
+    settings = get_settings()
+    typer.echo("Re-verifying in the sandbox (install, then three test runs) ...")
+    try:
+        meta = repackage_package(package, settings, test_id=test)
+    except (PackageError, GitError, SandboxError) as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    v = meta["verification"]
+    typer.echo(f"  the test fails without the source change: {v['test_fails_without_fix']}")
+    typer.echo(f"  the test passes with it:                  {v['test_passes_with_fix']}")
+    typer.echo(f"  tests that newly fail:                    {len(v['new_failures'])}")
+    typer.echo("Any earlier approval was cleared.\n")
+    _review_flow(package, settings)
+
+
 @app.command("triage-scan")
 def triage_scan(
     repo: str,
@@ -1005,6 +1033,8 @@ def triage_scan(
 
     typer.echo(f"{repo} (default branch {result.repo.default_branch}): "
                f"repository checks {result.repo_report.verdict.upper()}")
+    for t in result.ai_threads[:3]:
+        typer.echo(f"  ai-thread: {t}")
     for f in result.repo_report.findings:
         typer.echo(f"  [{f.level:<4}] {f.message}")
     candidates = [r for r in result.rows if r.verdict != "skip"][:limit]

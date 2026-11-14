@@ -346,3 +346,13 @@ def fetch_repo_info(client: httpx.Client, full_name: str) -> RepoInfo:
         disabled=bool(d.get("disabled")),
         private=bool(d.get("private")),
     )
+
+def list_recent_threads(
+    client: httpx.Client, full_name: str, limit: int = 100
+) -> list[tuple[int, str, bool]]:
+    """(number, title, is_pull_request) of the most recently updated issues and PRs."""
+    data = _get(
+        client, f"/repos/{full_name}/issues",
+        state="all", sort="updated", direction="desc", per_page=min(limit, 100),
+    )
+    return [(d["number"], d.get("title") or "", "pull_request" in d) for d in data]

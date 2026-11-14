@@ -16,7 +16,8 @@ from repodoctor.tools.triage import (
     triage_issue,
     triage_links,
     triage_repo,
-    scan_repo
+    scan_repo,
+    ai_thread_findings,
 )
 
 NOW = datetime(2026, 11, 10, tzinfo=UTC)
@@ -219,3 +220,23 @@ def test_scan_stops_when_the_docs_ban_ai():
     texts = {"/repos/o/r/contents/CONTRIBUTING.md": "AI-generated PRs are not accepted.\n"}
     result = scan_repo(mock_client(scan_routes([list_item(1)]), texts), "o/r", now=NOW)
     assert result.repo_report.verdict == "skip" and result.rows == []
+
+def test_ai_thread_titles_are_found_but_user_agent_is_not():
+    threads = [
+        (512, "Low quality duplicate PRs caused by agent projects that name Humanize", False),
+        (3271, "deprecate `UserAgent`", False),
+        (7, "Handle the user agent header", True),
+        (8, "Fix typo in docs", True),
+    ]
+    hits, findings = ai_thread_findings(threads)
+    assert hits == ["#512 Low quality duplicate PRs caused by agent projects that name Humanize"]
+    assert findings[0].level == "warn" and findings[0].code == "ai_threads"
+
+
+def test_run_triage_reports_threads_about_agents():
+    routes = {**issue_routes(), "/repos/o/r/issues": [
+        {"number": 512, "title": "Low quality duplicate PRs caused by agent projects"},
+    ]}
+    result = run_triage(mock_client(routes), REF, me="me", now=NOW)
+    assert result.ai_threads == ["#512 Low quality duplicate PRs caused by agent projects"]
+    assert "ai_threads" in codes(result.report)

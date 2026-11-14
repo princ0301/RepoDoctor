@@ -192,3 +192,7 @@ def fetch_pull_head(root: Path, number: int) -> str:
     """Fetch refs/pull/N/head (also works for PRs from forks); returns its commit sha."""
     run_git("fetch", "--depth", "1", "origin", f"pull/{number}/head", cwd=root, timeout=300)
     return run_git("rev-parse", "FETCH_HEAD", cwd=root).strip()
+
+def added_files(root: Path, base: str) -> list[str]:
+    """Files that exist now but did not exist at `base`."""
+    return run_git("diff", "--diff-filter=A", "--name-only", base, cwd=root).splitlines()

@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,9 +11,18 @@ from repodoctor.tools.diffcheck import check_diff, parse_diff, repo_line_length,
 from repodoctor.tools.findings import Report
 from repodoctor.tools.github import IssueData, RepoInfo
 from repodoctor.tools.issue_ref import IssueRef
-from repodoctor.tools.repo import commit_files, get_diff_since, head_sha, run_git
+from repodoctor.tools.paths import is_test_path
+from repodoctor.tools.repo import (
+    added_files,
+    commit_files,
+    get_diff_since,
+    remove_dir,
+    run_git,
+)
+from repodoctor.tools.review_hints import changelog_findings, hint_new_test_files
 
 REPODOCTOR_URL = "https://github.com/princ0301/RepoDoctor"
+TODO_MARKER = "TODO(reviewer)"
 
 
 class PackageError(RuntimeError):
@@ -54,13 +64,13 @@ def build_pr_text(
     suite = f"the unmodified code had {base.get('passed', 0)} passing tests"
     if preexisting:
         suite += f" and {preexisting} that already failed, which were ignored"
-    hypothesis = " ".join((final.get("hypothesis") or "").split())
     body = [
         f"Fixes #{ref.number}.",
         "",
         "## Root cause",
         "",
-        hypothesis or "(see the diff)",
+        f"{TODO_MARKER}: one or two sentences, in your own words, on why the bug happens. "
+        "Delete this line.",
         "",
         "## Verification",
         "",
@@ -87,6 +97,7 @@ def prepare_package(
     triage: Report,
     repo_info: RepoInfo,
     policy_hits: list[str],
+    ai_threads: list[str] | None = None,
 ) -> Path:
     if not final.get("success"):
         raise PackageError("the run did not succeed, so there is nothing to submit")
@@ -97,20 +108,26 @@ def prepare_package(
     if not user:
         raise PackageError("GITHUB_USERNAME is not set")
 
-    paths = parse_diff(get_diff_since(workdir, base_sha)).files
+    pkg = settings.prs_dir.resolve() / f"{ref.owner}__{ref.repo}-{ref.number}"
+    pkg.mkdir(parents=True, exist_ok=True)
+    clone = pkg / "clone"   # the package owns its clone: later runs cannot erase it
+    remove_dir(clone)
+    shutil.copytree(workdir, clone, symlinks=True)
+
+    paths = parse_diff(get_diff_since(clone, base_sha)).files
     if not paths:
         raise PackageError("the run produced no changes")
 
     # One clean commit on a branch: undo the local test commit, keep every file.
     branch = f"repodoctor/issue-{ref.number}"
-    run_git("checkout", "-q", "-B", branch, cwd=workdir)
-    run_git("reset", "-q", "--mixed", base_sha, cwd=workdir)
+    run_git("checkout", "-q", "-B", branch, cwd=clone)
+    run_git("reset", "-q", "--mixed", base_sha, cwd=clone)
 
     test_id = (final.get("target_tests") or [""])[0]
     repro = final.get("repro_file")
     if repro and repro in paths:
-        new_rel = _issue_test_path(workdir, repro, ref.number)
-        (workdir / repro).rename(workdir / new_rel)
+        new_rel = _issue_test_path(clone, repro, ref.number)
+        (clone / repro).rename(clone / new_rel)
         paths = [new_rel if p == repro else p for p in paths]
         test_id = test_id.replace(repro, new_rel, 1)
 
@@ -119,27 +136,28 @@ def prepare_package(
         settings.git_author_name or user,
         settings.git_author_email or f"{user}@users.noreply.github.com",
     )
-    head = commit_files(workdir, paths, f"{title}\n\nFixes #{ref.number}", author)
-    diff = get_diff_since(workdir, base_sha)
-    patch = run_git("format-patch", "-1", "--stdout", cwd=workdir)
+    head = commit_files(clone, paths, f"{title}\n\nFixes #{ref.number}", author)
+    diff = get_diff_since(clone, base_sha)
+    patch = run_git("format-patch", "-1", "--stdout", cwd=clone)
 
     style = check_diff(
         diff,
-        line_length=repo_line_length(workdir),
+        line_length=repo_line_length(clone),
         max_lines=settings.pr_max_diff_lines,
         max_files=settings.pr_max_files,
         secrets=(settings.nvidia_api_key, settings.openrouter_api_key, settings.github_token),
     )
-    style.extend(syntax_findings(workdir, paths))
+    style.extend(syntax_findings(clone, paths))
+    style.extend(changelog_findings(clone, paths))
+    new_tests = [p for p in added_files(clone, base_sha) if is_test_path(p)]
+    style.extend(hint_new_test_files(clone, new_tests))
 
-    pkg = settings.prs_dir.resolve() / f"{ref.owner}__{ref.repo}-{ref.number}"
-    pkg.mkdir(parents=True, exist_ok=True)
     (pkg / "change.patch").write_bytes(patch.encode("utf-8"))
     (pkg / "pr.md").write_bytes(f"{title}\n\n{body}".encode())
 
     base_counts = final.get("baseline") or {}
     save_package(pkg, {
-        "version": 1,
+        "version": 2,
         "repo": ref.full_name,
         "issue": ref.number,
         "issue_url": issue.url,
@@ -147,7 +165,7 @@ def prepare_package(
         "base_sha": base_sha,
         "head_sha": head,
         "default_branch": repo_info.default_branch,
-        "workdir": str(workdir),
+        "workdir": str(clone),
         "files": paths,
         "author": {"name": author[0], "email": author[1]},
         "dry_run": settings.dry_run,
@@ -155,6 +173,9 @@ def prepare_package(
         "triage": [vars(f) for f in triage.findings],
         "style": [vars(f) for f in style.findings],
         "policy_hits": policy_hits,
+        "ai_threads": ai_threads or [],
+        "hypothesis": final.get("hypothesis") or "",
+        "baseline": final.get("baseline"),
         "evidence": {
             "test_id": test_id,
             "fix_attempts": final.get("attempts"),
@@ -177,8 +198,15 @@ def approve(pkg: Path, *, policy_acknowledged: bool) -> dict:
     blocking = blocking_findings(meta)
     if blocking:
         raise PackageError("cannot approve: " + "; ".join(f["message"] for f in blocking))
-    if meta["policy_hits"] and not policy_acknowledged:
-        raise PackageError("the contribution docs mention AI: confirm you read them")
+    if TODO_MARKER in (pkg / "pr.md").read_text(encoding="utf-8"):
+        raise PackageError(
+            f"pr.md still contains {TODO_MARKER}: write the cause in your own words "
+            "and delete that line"
+        )
+    if (meta["policy_hits"] or meta.get("ai_threads")) and not policy_acknowledged:
+        raise PackageError(
+            "the contribution docs or recent threads mention AI: confirm you read them"
+        )
     meta["approval"] = {
         "at": _now(),
         "policy_acknowledged": policy_acknowledged,
@@ -218,12 +246,22 @@ def render_review(meta: dict, patch: str, pr_text: str) -> str:
         f"REVIEW  {meta['repo']}  issue #{meta['issue']}  {meta['issue_url']}",
         "=" * 72,
         f"Branch {meta['branch']} (from {meta['base_sha'][:10]}); files: {', '.join(meta['files'])}",
+        f"Work clone: {meta['workdir']}",
         "DRY_RUN is on: nothing will be pushed." if meta["dry_run"] else "DRY_RUN is OFF.",
     ]
     out += section("TRIAGE", fmt(meta["triage"]))
     out += section("POLICY (contribution docs that mention AI)",
                    [f"  {h}" for h in meta["policy_hits"]])
+    out += section("RECENT THREADS ABOUT AI, AGENTS OR BOTS",
+                   [f"  {t}" for t in meta.get("ai_threads", [])])
     out += section("DIFF CHECKS", fmt(meta["style"]))
+    v = meta.get("verification")
+    if v:
+        out += section("RE-VERIFICATION (after your edits)", [
+            f"  The test fails without the source change: {v['test_fails_without_fix']}",
+            f"  The test passes with it: {v['test_passes_with_fix']}",
+            f"  Tests that newly fail: {len(v['new_failures'])}",
+        ])
     out += section("EVIDENCE", [
         f"  New test: {ev['test_id']} (accepted only because it failed on the unmodified code)",
         f"  Fix attempts: {ev['fix_attempts']}; reproduction attempts: {ev['repro_attempts']}",
@@ -231,6 +269,10 @@ def render_review(meta: dict, patch: str, pr_text: str) -> str:
         f"{(base['failed'] or 0) + (base['errors'] or 0)} already failing (ignored)",
         f"  Models: explore {ev['models']['explore']}, fix {ev['models']['fix']}",
     ])
+    out += section(
+        "THE AGENT'S HYPOTHESIS (unverified: write the cause in pr.md in your own words)",
+        [f"  {line}" for line in (meta.get("hypothesis") or "(none)").splitlines()],
+    )
     out += section("PULL REQUEST TEXT (posted as written; edit pr.md before approving)",
                    [f"  {line}" for line in pr_text.splitlines()])
     out += ["", "PATCH", patch]
