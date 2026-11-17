@@ -20,7 +20,6 @@ from repodoctor.tools.github import (
 )
 from repodoctor.tools.issue_ref import IssueRef
 from repodoctor.tools.policy import policy_mentions
-from repodoctor.tools.repo_config import ignored_paths, with_ignores
 from repodoctor.tools.repo import (
     ProjectInfo,
     checkout_commit,
@@ -30,6 +29,7 @@ from repodoctor.tools.repo import (
     get_diff_since,
     remove_dir,
 )
+from repodoctor.tools.repo_config import apply_overrides
 from repodoctor.tools.sandbox import Sandbox, ensure_image
 from repodoctor.tracing import CallCounter, run_config
 
@@ -127,7 +127,7 @@ def execute(
     info = detect_project(workdir)
     if not info.supported:
         raise RunnerError(f"unsupported project: {info.reason}")
-    info = with_ignores(info, ignored_paths(repo) if repo else [])
+    info = apply_overrides(info, repo) if repo else info
 
     # Build models first: config and credential problems should fail before Docker starts.
     tools = make_search_tools(workdir)

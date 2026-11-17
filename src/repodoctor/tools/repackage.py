@@ -1,12 +1,12 @@
 """Rebuild a package after the reviewer edited its work clone, and re-verify it."""
 
-import shutil
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from repodoctor.config import Settings
+from repodoctor.tools.conventions import classify, new_test_findings, update_checkboxes
 from repodoctor.tools.diffcheck import (
     check_diff,
     parse_diff,
@@ -14,35 +14,22 @@ from repodoctor.tools.diffcheck import (
     syntax_findings,
     unused_import_findings,
 )
-from repodoctor.tools.findings import Finding
-from repodoctor.tools.paths import is_test_path
-from repodoctor.tools.pr_package import PackageError, load_package, save_package
-from repodoctor.tools.repo import (
-    GitError,
-    added_files,
-    detect_project,
-    get_diff_since,
-    head_sha,
-    run_git,
+from repodoctor.tools.findings import TODO_MARKER, Finding
+from repodoctor.tools.lint import detect_lint_tools, exists_at, install_command, run_lint
+from repodoctor.tools.pr_package import (
+    PackageError,
+    commit_message,
+    load_package,
+    save_package,
+    trailer_text,
 )
-from repodoctor.tools.repo_config import ignored_paths, with_ignores
-from repodoctor.tools.review_hints import (
-    changelog_findings,
-    hint_new_test_files,
-    unknown_test_id,
-)
+from repodoctor.tools.repo import detect_project, get_diff_since, head_sha, run_git
+from repodoctor.tools.repo_config import apply_overrides
+from repodoctor.tools.review_hints import changelog_findings, unknown_test_id
 from repodoctor.tools.sandbox import Sandbox
 from repodoctor.tools.testreport import SuiteReport, new_failures
 
 __all__ = ["repackage"]
-
-
-def _exists_at(root: Path, rev: str, rel: str) -> bool:
-    try:
-        run_git("cat-file", "-e", f"{rev}:{rel}", cwd=root)
-        return True
-    except GitError:
-        return False
 
 
 def repackage(
@@ -64,16 +51,22 @@ def repackage(
         raise PackageError(f"the work clone is not on branch {meta['branch']}")
     base = meta["base_sha"]
     name, email = meta["author"]["name"], meta["author"]["email"]
+
     tid = test_id or meta["evidence"]["test_id"]
     problem = unknown_test_id(root, tid)   # before anything is changed
     if problem:
         raise PackageError(f"{problem} Pass --test FILE::NAME for the test as it is now.")
 
-    # Fold every edit in the clone into the single commit.
+    # Fold every edit in the clone into the single commit, titled like pr.md.
+    title = (pkg / "pr.md").read_text(encoding="utf-8").split("\n", 1)[0].strip()
+    fix_model = meta["evidence"]["models"]["fix"]
+    model = fix_model.partition(":")[2] or fix_model
+    trailer = trailer_text(settings, model)
     run_git("add", "-A", cwd=root)
     run_git(
         "-c", f"user.name={name}", "-c", f"user.email={email}",
-        "commit", "--amend", "--no-edit", "-q", "--no-verify", "--no-gpg-sign", cwd=root,
+        "commit", "--amend", "-q", "--no-verify", "--no-gpg-sign",
+        "-m", commit_message(title, meta["issue"], trailer), cwd=root,
     )
     head = head_sha(root)
     diff = get_diff_since(root, base)
@@ -81,27 +74,37 @@ def repackage(
     if not files:
         raise PackageError("no changes are left in the work clone")
 
-    sources = [f for f in files if not is_test_path(f)]
-    if not sources:
-        raise PackageError("the change touches no source file, only tests")
-    modified = [f for f in sources if _exists_at(root, base, f)]
+    code_files = [f for f in files if classify(f) in ("source", "other")]
+    if not code_files:
+        raise PackageError("the change touches no source file, only tests or docs")
+    modified = [f for f in code_files if exists_at(root, base, f)]
 
-    info = with_ignores(detect_project(root), ignored_paths(meta["repo"]))
+    info = apply_overrides(detect_project(root), meta["repo"])
     if not info.supported:
         raise PackageError(f"unsupported project: {info.reason}")
+    tools, hooks_not_run = detect_lint_tools(root)
     factory = sandbox_factory or (
         lambda r: Sandbox(r, memory=settings.sandbox_memory, cpus=settings.sandbox_cpus)
     )
     timeout = settings.sandbox_timeout_s
     findings: list[Finding] = []
     fails_before: bool | None = None
+    lint_findings: list[Finding] = []
 
     with factory(root) as sb:
         if not sb.install(info).ok:
             raise PackageError("dependency install failed while re-verifying")
+        if tools:
+            installed = sb.run(install_command(tools), settings.build_install_timeout_s)
+            if not installed.ok:
+                findings.append(Finding(
+                    "info", "lint_unavailable",
+                    "The project's linters could not be installed here; run them yourself.",
+                ))
+                tools = []
         sb.lock_network()
 
-        if modified and len(modified) == len(sources):
+        if modified and len(modified) == len(code_files):
             run_git("checkout", base, "--", *modified, cwd=root)
             try:
                 res, _ = sb.run_suite(info, args=[tid], timeout=timeout)
@@ -151,6 +154,8 @@ def repackage(
                     f"{len(regressions)} test(s) that passed before now fail: {shown}",
                 ))
 
+        lint_findings = run_lint(sb, root, tools, files, diff, base, head)
+
     style = check_diff(
         diff,
         line_length=repo_line_length(root),
@@ -161,18 +166,36 @@ def repackage(
     style.extend(syntax_findings(root, files))
     style.extend(unused_import_findings(root, diff))
     style.extend(changelog_findings(root, files))
-    style.extend(hint_new_test_files(
-        root, [p for p in added_files(root, base) if is_test_path(p)]
-    ))
+    style.extend(new_test_findings(meta.get("conventions"), root, base, files, meta["issue"]))
+    style.extend(lint_findings)
+    if hooks_not_run:
+        style.add(
+            "info", "precommit_not_run",
+            f"pre-commit also runs {', '.join(hooks_not_run)} (not run here): "
+            "run `pre-commit run --files ...` yourself.",
+        )
     style.extend(findings)
 
     (pkg / "change.patch").write_bytes(
         run_git("format-patch", "-1", "--stdout", cwd=root).encode("utf-8")
     )
+
+    # Tick the checklist boxes this run has verified; never untick, never touch the reviewer's.
+    lint_problems = any(f.level == "warn" and f.code in ("lint", "format") for f in lint_findings)
+    facts = {
+        "tests_added": any(classify(f) == "test" for f in files),
+        "test_fails_without_fix": fails_before,
+        "changelog_touched": any(classify(f) in ("changelog", "fragment") for f in files)
+        and TODO_MARKER not in diff,
+        "lint_passed": True if (tools and not lint_problems and not hooks_not_run) else None,
+        "suite_passed": bool(passes and report is not None and not regressions),
+    }
     old_id = meta["evidence"]["test_id"]
-    if tid != old_id:
-        text = (pkg / "pr.md").read_text(encoding="utf-8").replace(old_id, tid)
-        (pkg / "pr.md").write_bytes(text.encode("utf-8"))
+    text = (pkg / "pr.md").read_text(encoding="utf-8")
+    new_text = update_checkboxes(text.replace(old_id, tid) if tid != old_id else text, facts)
+    if new_text != text:
+        (pkg / "pr.md").write_bytes(new_text.encode("utf-8"))
+
     meta["evidence"]["test_id"] = tid
     meta.update(
         head_sha=head,
@@ -184,6 +207,8 @@ def repackage(
             "test_fails_without_fix": fails_before,
             "test_passes_with_fix": passes,
             "new_failures": list(regressions)[:20],
+            "lint_tools": [t.name for t in tools],
+            "hooks_not_run": hooks_not_run,
         },
     )
     save_package(pkg, meta)

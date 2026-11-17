@@ -59,3 +59,15 @@ def test_install_retries_only_after_a_timeout(tmp_path):
     calls.clear()
     assert not Stalls(tmp_path).install(ProjectInfo(True), timeout=7, attempts=1).ok
     assert calls == [7]
+
+
+def test_install_exports_the_projects_version_variable(tmp_path):
+    seen: list[str] = []
+
+    class Spy(Sandbox):
+        def run(self, cmd, timeout):
+            seen.append(cmd)
+            return ExecResult(0, "", False, 0.0)
+
+    Spy(tmp_path).install(ProjectInfo(True, install_env={"SETUPTOOLS_SCM_PRETEND_VERSION_FOR_X": "1.2.3"}))
+    assert "export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_X=1.2.3; " in seen[0]

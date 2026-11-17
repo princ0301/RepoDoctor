@@ -1,10 +1,12 @@
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from repodoctor.config import Settings
+from repodoctor.tools.conventions import analyze
 from repodoctor.tools.findings import Report
 from repodoctor.tools.github import IssueData, RepoInfo
 from repodoctor.tools.issue_ref import IssueRef
@@ -31,13 +33,13 @@ ISSUE = IssueData(
 REPO = RepoInfo("main", False, False, False)
 
 
-@pytest.fixture
-def run(make_git_repo):
+def build_run(make_git_repo, extra=None):
     """A work clone in the state the agent leaves it: test committed, fix staged."""
     root = make_git_repo({
         "app.py": "x = 1\n",
         "requirements.txt": "\n",
         "tests/test_app.py": "def test_ok():\n    assert True\n",
+        **(extra or {}),
     })
     base = head_sha(root)
     (root / "tests" / "test_repodoctor_repro.py").write_bytes(
@@ -56,25 +58,66 @@ def run(make_git_repo):
     return root, final, base
 
 
-def settings(tmp_path, **over) -> Settings:
-    return Settings(_env_file=None, github_username="me", prs_dir=tmp_path / "prs", **over)
+@pytest.fixture
+def run(make_git_repo):
+    return build_run(make_git_repo)
+
+CONV_TEMPLATE = (
+    "<!-- c -->\n\nChecklist:\n\n"
+    "- [ ] Add tests that demonstrate the behavior. Tests should fail without the change.\n"
+    "- [ ] Run `pre-commit` hooks and fix any issues.\n"
+    "- [ ] Run `pytest` and `tox`.\n"
+)
+PRECOMMIT = (
+    "repos:\n  - repo: https://github.com/astral-sh/ruff-pre-commit\n"
+    "    rev: v0.4.4\n    hooks:\n      - id: ruff\n"
+)
 
 
-def prepare(run, tmp_path, **over):
-    root, final, _ = run
+def make_conv():
+    records = [{
+        "number": n, "title": "t", "issues": [n], "merged_at": "x",
+        "files": [
+            {"path": "app.py", "status": "modified", "additions": 1, "deletions": 1, "kind": "source"},
+            {"path": "tests/test_app.py", "status": "modified", "additions": 3, "deletions": 0,
+             "kind": "test"},
+            {"path": f"changelog/{n}.bugfix.rst", "status": "added", "additions": 1, "deletions": 0,
+             "kind": "fragment"},
+        ],
+        "new_tests": [f"test_issue{n}_x"],
+    } for n in (1, 2, 3)]
+    return {"prs": records, "stats": analyze(records), "pr_template": CONV_TEMPLATE,
+            "changelog_head": "", "changelog_style": None}
+
+
+def prepare_conv(root, final, tmp_path):
     return prepare_package(
-        ref=REF, issue=ISSUE, final={**final, **over}, workdir=root,
-        settings=settings(tmp_path), triage=Report(), repo_info=REPO, policy_hits=[],
+        ref=REF, issue=ISSUE, final=final, workdir=root, settings=settings(tmp_path),
+        triage=Report(), repo_info=REPO, policy_hits=[], conventions=make_conv(),
     )
 
 
-def fill_todo(pkg: Path) -> None:
-    p = pkg / "pr.md"
-    lines = [
-        "The cause, in my own words." if "TODO(reviewer)" in ln else ln
-        for ln in p.read_text(encoding="utf-8").splitlines()
-    ]
-    p.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+def test_prepare_uses_the_projects_conventions(run, tmp_path):
+    root, final, _ = run
+    pkg = prepare_conv(root, final, tmp_path)
+    meta = load_package(pkg)
+    clone = Path(meta["workdir"])
+    assert "changelog/5.bugfix.rst" in meta["files"]
+    assert "TODO(reviewer)" in (clone / "changelog" / "5.bugfix.rst").read_text(encoding="utf-8")
+    text = (pkg / "pr.md").read_text(encoding="utf-8")
+    assert "Checklist:" in text and "- [ ] Add tests that demonstrate" in text and "<!--" not in text
+    assert "Assisted-by: RepoDoctor (" in text
+    style = {f["code"]: f["message"] for f in meta["style"]}
+    assert {"new_test_file", "test_name_convention", "not_reverified"} <= style.keys()
+    assert "tests/test_app.py" in style["new_test_file"]
+
+
+def test_a_todo_left_in_the_patch_blocks_approval(run, tmp_path):
+    root, final, _ = run
+    pkg = prepare_conv(root, final, tmp_path)
+    fill_todo(pkg)
+    with pytest.raises(PackageError, match="patch still contains"):
+        approve(pkg, policy_acknowledged=True)
 
 
 class FakeSandbox:
@@ -99,6 +142,67 @@ class FakeSandbox:
         if args:
             return ExecResult(self.target.pop(0), "", False, 0.0), SuiteReport()
         return ExecResult(0, "", False, 0.0), self.suite
+
+
+class LintSandbox(FakeSandbox):
+    def __init__(self, target, suite, replies):
+        super().__init__(target, suite)
+        self.replies = replies
+        self.commands: list[str] = []
+
+    def run(self, cmd, timeout):
+        self.commands.append(cmd)
+        for key, queue in self.replies.items():
+            if key in cmd:
+                code, out = queue[0]
+                return ExecResult(code, out, False, 0.0)
+        return ExecResult(0, "", False, 0.0)
+
+
+@pytest.mark.parametrize("ruff_reply, lint_box", [
+    ((0, ""), "x"), ((1, "app.py:1:1: E501 too long\n"), " "),
+])
+def test_repackage_runs_the_projects_linters_and_ticks_what_it_verified(
+    make_git_repo, tmp_path, ruff_reply, lint_box
+):
+    root, final, _ = build_run(make_git_repo, {".pre-commit-config.yaml": PRECOMMIT})
+    pkg = prepare_conv(root, final, tmp_path)
+    clone = Path(load_package(pkg)["workdir"])
+    (clone / "changelog" / "5.bugfix.rst").write_text("Fix the value of x.\n", encoding="utf-8")
+    sb = LintSandbox([1, 0], SuiteReport(total=3, passed=3),
+                     {"pip install": [(0, "")], "ruff check": [ruff_reply]})
+    meta = repackage(pkg, settings(tmp_path), sandbox_factory=lambda _r: sb)
+
+    assert "ruff==0.4.4" in sb.commands[0]
+    assert meta["verification"]["lint_tools"] == ["ruff-check"]
+    text = (pkg / "pr.md").read_text(encoding="utf-8")
+    assert "- [x] Add tests that demonstrate" in text
+    assert "- [ ] Run `pytest` and `tox`." in text
+    clean = ruff_reply[0] == 0
+    assert ("- [x] Run `pre-commit` hooks" in text) is clean
+    assert any(f["code"] == "lint" for f in meta["style"]) is (not clean)
+    assert not any(f["code"] == "not_reverified" for f in meta["style"])
+
+def settings(tmp_path, **over) -> Settings:
+    return Settings(_env_file=None, github_username="me", prs_dir=tmp_path / "prs", **over)
+
+
+def prepare(run, tmp_path, **over):
+    root, final, _ = run
+    return prepare_package(
+        ref=REF, issue=ISSUE, final={**final, **over}, workdir=root,
+        settings=settings(tmp_path), triage=Report(), repo_info=REPO, policy_hits=[],
+    )
+
+
+def fill_todo(pkg: Path) -> None:
+    p = pkg / "pr.md"
+    lines = [
+        "The cause, in my own words: the value was set wrong, so the check failed."
+        if "TODO(reviewer)" in ln else ln
+        for ln in p.read_text(encoding="utf-8").splitlines()
+    ]
+    p.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
 
 
 def test_prepare_makes_one_clean_commit_on_a_branch_in_its_own_clone(run, tmp_path):
@@ -140,7 +244,14 @@ def test_the_pr_text_discloses_the_agent_and_leaves_the_cause_to_the_reviewer(ru
     text = (prepare(run, tmp_path) / "pr.md").read_text(encoding="utf-8")
     assert text.startswith("x is wrong\n") and "Fixes #5." in text
     assert "AI agent" in text and "@me" in text and "tests/test_issue_5.py::test_x" in text
+    assert "## AI assistance" in text
     assert "TODO(reviewer)" in text and "x has the wrong value" not in text
+
+
+def test_the_commit_credits_the_agent_with_a_trailer(run, tmp_path):
+    pkg = prepare(run, tmp_path)
+    body = run_git("log", "-1", "--format=%B", cwd=Path(load_package(pkg)["workdir"]))
+    assert "Fixes #5" in body and "Assisted-by: RepoDoctor (" in body
 
 
 def test_prepare_refuses_without_a_success_or_a_username(run, tmp_path):
@@ -276,3 +387,52 @@ def test_repackage_says_when_pytest_cannot_run_the_test(run, tmp_path):
     meta = repackage(pkg, settings(tmp_path), sandbox_factory=lambda _root: sb)
     codes = {f["code"] for f in blocking_findings(meta)}
     assert "test_not_runnable" in codes and "test_does_not_fail_without_fix" not in codes
+
+
+def test_a_one_word_root_cause_is_not_enough(run, tmp_path):
+    pkg = prepare(run, tmp_path)
+    lines = ["fixed" if "TODO(reviewer)" in ln else ln
+             for ln in (pkg / "pr.md").read_text(encoding="utf-8").splitlines()]
+    (pkg / "pr.md").write_bytes(("\n".join(lines) + "\n").encode())
+    with pytest.raises(PackageError, match="Root cause"):
+        approve(pkg, policy_acknowledged=True)
+
+
+def test_markdown_heading_marks_are_stripped_from_the_title(run, tmp_path):
+    root, final, _ = run
+    pkg = prepare_package(
+        ref=REF, issue=replace(ISSUE, title="# truncate() shortens text"), final=final,
+        workdir=root, settings=settings(tmp_path), triage=Report(), repo_info=REPO,
+        policy_hits=[],
+    )
+    assert (pkg / "pr.md").read_text(encoding="utf-8").startswith("truncate() shortens text\n")
+
+
+def test_the_disclosure_trailer_can_be_switched_off(run, tmp_path):
+    root, final, _ = run
+    pkg = prepare_package(
+        ref=REF, issue=ISSUE, final=final, workdir=root,
+        settings=settings(tmp_path, commit_trailer=""), triage=Report(),
+        repo_info=REPO, policy_hits=[],
+    )
+    body = run_git("log", "-1", "--format=%B", cwd=Path(load_package(pkg)["workdir"]))
+    assert "Assisted-by" not in body
+    assert "Assisted-by" not in (pkg / "pr.md").read_text(encoding="utf-8")
+    assert "AI agent" in (pkg / "pr.md").read_text(encoding="utf-8")
+
+
+def test_repackage_uses_the_title_from_pr_md_as_the_commit_message(run, tmp_path):
+    pkg = prepare(run, tmp_path)
+    rest = (pkg / "pr.md").read_text(encoding="utf-8").split("\n", 1)[1]
+    (pkg / "pr.md").write_bytes(("Fix the wrong value of x\n" + rest).encode())
+    sb = FakeSandbox(target=[1, 0], suite=SuiteReport(total=3, passed=3))
+    meta = repackage(pkg, settings(tmp_path), sandbox_factory=lambda _root: sb)
+    assert run_git("log", "-1", "--format=%s", cwd=Path(meta["workdir"])).strip() == (
+        "Fix the wrong value of x"
+    )
+    assert "Subject: [PATCH] Fix the wrong value of x" in (pkg / "change.patch").read_text(
+        encoding="utf-8"
+    )
+    assert "Assisted-by: RepoDoctor (" in run_git(
+        "log", "-1", "--format=%B", cwd=Path(meta["workdir"])
+    )

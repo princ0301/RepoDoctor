@@ -2,11 +2,20 @@
 
 import hashlib
 import json
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 from repodoctor.config import Settings
+from repodoctor.tools.conventions import (
+    classify,
+    convention_summary_lines,
+    draft_changelog_entry,
+    fragment_path,
+    new_test_findings,
+    render_checklist,
+)
 from repodoctor.tools.diffcheck import (
     check_diff,
     parse_diff,
@@ -14,25 +23,27 @@ from repodoctor.tools.diffcheck import (
     syntax_findings,
     unused_import_findings,
 )
-from repodoctor.tools.findings import Report
+from repodoctor.tools.findings import TODO_MARKER, Report
 from repodoctor.tools.github import IssueData, RepoInfo
 from repodoctor.tools.issue_ref import IssueRef
-from repodoctor.tools.paths import is_test_path
-from repodoctor.tools.repo import (
-    added_files,
-    commit_files,
-    get_diff_since,
-    remove_dir,
-    run_git,
-)
-from repodoctor.tools.review_hints import changelog_findings, hint_new_test_files
+from repodoctor.tools.repo import commit_files, get_diff_since, remove_dir, run_git
+from repodoctor.tools.review_hints import changelog_findings
 
 REPODOCTOR_URL = "https://github.com/princ0301/RepoDoctor"
-TODO_MARKER = "TODO(reviewer)"
+MIN_ROOT_CAUSE_WORDS = 8
 
 
 class PackageError(RuntimeError):
     """The package cannot be prepared or approved."""
+
+
+def trailer_text(settings: Settings, model: str) -> str:
+    return settings.commit_trailer.replace("{model}", model).strip()
+
+
+def commit_message(title: str, issue: int, trailer: str = "") -> str:
+    msg = f"{title}\n\nFixes #{issue}"
+    return f"{msg}\n\n{trailer}" if trailer else msg
 
 
 def _now() -> str:
@@ -51,6 +62,11 @@ def save_package(pkg: Path, meta: dict) -> None:
     (pkg / "package.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
 
+def root_cause_section(pr_text: str) -> str:
+    m = re.search(r"^## Root cause[ \t]*\n(.*?)(?=^## |\Z)", pr_text, re.S | re.M)
+    return m.group(1).strip() if m else ""
+
+
 def _issue_test_path(root: Path, old_rel: str, number: int) -> str:
     folder = old_rel.rsplit("/", 1)[0] + "/" if "/" in old_rel else ""
     candidate = f"{folder}test_issue_{number}.py"
@@ -62,9 +78,10 @@ def _issue_test_path(root: Path, old_rel: str, number: int) -> str:
 
 
 def build_pr_text(
-    *, ref: IssueRef, issue: IssueData, final: dict, user: str, test_id: str
+    *, ref: IssueRef, issue: IssueData, final: dict, user: str, test_id: str,
+    template: str = "", facts: dict | None = None, trailer: str = "",
 ) -> tuple[str, str]:
-    title = " ".join(issue.title.split())[:100] or f"Fix #{ref.number}"
+    title = re.sub(r"^[#>*\-\s]+", "", " ".join(issue.title.split()))[:100] or f"Fix #{ref.number}"
     base = final.get("baseline") or {}
     preexisting = (base.get("failed") or 0) + (base.get("errors") or 0)
     suite = f"the unmodified code had {base.get('passed', 0)} passing tests"
@@ -83,13 +100,20 @@ def build_pr_text(
         f"- The new test `{test_id}` fails on the unmodified code and passes with this change.",
         f"- The existing test suite shows no new failures ({suite}).",
         "",
-        "## Note",
+    ]
+    checklist = render_checklist(template, facts or {}) if template.strip() else ""
+    if checklist:
+        body += [checklist, ""]
+    body += [
+        "## AI assistance",
         "",
         f"This change was prepared with the help of an AI agent ([RepoDoctor]({REPODOCTOR_URL})) "
         f"and reviewed by @{user} before it was submitted. Please say if you would like "
         "it changed or closed.",
         "",
     ]
+    if trailer:
+        body += [trailer, ""]
     return title, "\n".join(body)
 
 
@@ -104,6 +128,7 @@ def prepare_package(
     repo_info: RepoInfo,
     policy_hits: list[str],
     ai_threads: list[str] | None = None,
+    conventions: dict | None = None,
 ) -> Path:
     if not final.get("success"):
         raise PackageError("the run did not succeed, so there is nothing to submit")
@@ -137,12 +162,28 @@ def prepare_package(
         paths = [new_rel if p == repro else p for p in paths]
         test_id = test_id.replace(repro, new_rel, 1)
 
-    title, body = build_pr_text(ref=ref, issue=issue, final=final, user=user, test_id=test_id)
+    # Projects that keep one small file per change get an empty one, to be written by a human.
+    if conventions:
+        fp = fragment_path(conventions["stats"]["changelog"], ref.number)
+        if fp and not any(classify(p) == "fragment" for p in paths) and not (clone / fp).exists():
+            (clone / fp).parent.mkdir(parents=True, exist_ok=True)
+            (clone / fp).write_bytes(
+                f"{TODO_MARKER}: one line on what changed, for users of the project.\n".encode()
+            )
+            paths.append(fp)
+
+    model = settings.llm_fix.partition(":")[2] or settings.llm_fix
+    trailer = trailer_text(settings, model)
+    title, body = build_pr_text(
+        ref=ref, issue=issue, final=final, user=user, test_id=test_id,
+        template=(conventions or {}).get("pr_template", ""),
+        trailer=trailer,
+    )
     author = (
         settings.git_author_name or user,
         settings.git_author_email or f"{user}@users.noreply.github.com",
     )
-    head = commit_files(clone, paths, f"{title}\n\nFixes #{ref.number}", author)
+    head = commit_files(clone, paths, commit_message(title, ref.number, trailer), author)
     diff = get_diff_since(clone, base_sha)
     patch = run_git("format-patch", "-1", "--stdout", cwd=clone)
 
@@ -156,15 +197,29 @@ def prepare_package(
     style.extend(syntax_findings(clone, paths))
     style.extend(unused_import_findings(clone, diff))
     style.extend(changelog_findings(clone, paths))
-    new_tests = [p for p in added_files(clone, base_sha) if is_test_path(p)]
-    style.extend(hint_new_test_files(clone, new_tests))
+    style.extend(new_test_findings(conventions, clone, base_sha, paths, ref.number))
+    style.add(
+        "warn", "not_reverified",
+        "Lint, the final re-verification and the checklist have not run yet: run repackage.",
+    )
+
+    changelog = None
+    cl = conventions["stats"]["changelog"] if conventions else None
+    if cl and cl["kind"] == "file" and cl.get("path") and cl["path"] not in paths \
+            and (clone / cl["path"]).is_file():
+        st = conventions.get("changelog_style") or {}
+        changelog = {
+            "path": cl["path"],
+            "excerpt": st.get("excerpt", ""),
+            "suggestion": draft_changelog_entry(st, ref.number),
+        }
 
     (pkg / "change.patch").write_bytes(patch.encode("utf-8"))
     (pkg / "pr.md").write_bytes(f"{title}\n\n{body}".encode())
 
     base_counts = final.get("baseline") or {}
     save_package(pkg, {
-        "version": 2,
+        "version": 3,
         "repo": ref.full_name,
         "issue": ref.number,
         "issue_url": issue.url,
@@ -183,6 +238,8 @@ def prepare_package(
         "ai_threads": ai_threads or [],
         "hypothesis": final.get("hypothesis") or "",
         "baseline": final.get("baseline"),
+        "conventions": conventions,
+        "changelog": changelog,
         "evidence": {
             "test_id": test_id,
             "fix_attempts": final.get("attempts"),
@@ -205,10 +262,22 @@ def approve(pkg: Path, *, policy_acknowledged: bool) -> dict:
     blocking = blocking_findings(meta)
     if blocking:
         raise PackageError("cannot approve: " + "; ".join(f["message"] for f in blocking))
-    if TODO_MARKER in (pkg / "pr.md").read_text(encoding="utf-8"):
+    text = (pkg / "pr.md").read_text(encoding="utf-8")
+    if TODO_MARKER in text:
         raise PackageError(
             f"pr.md still contains {TODO_MARKER}: write the cause in your own words "
             "and delete that line"
+        )
+    if TODO_MARKER in (pkg / "change.patch").read_text(encoding="utf-8"):
+        raise PackageError(
+            f"the patch still contains {TODO_MARKER} (a changelog entry?): write it in the "
+            "work clone, then run repackage"
+        )
+    words = len(root_cause_section(text).split())
+    if words < MIN_ROOT_CAUSE_WORDS:
+        raise PackageError(
+            f"the 'Root cause' section of pr.md has {words} word(s): write at least "
+            f"{MIN_ROOT_CAUSE_WORDS}, saying why the bug happens in your own words"
         )
     if (meta["policy_hits"] or meta.get("ai_threads")) and not policy_acknowledged:
         raise PackageError(
@@ -261,14 +330,27 @@ def render_review(meta: dict, patch: str, pr_text: str) -> str:
                    [f"  {h}" for h in meta["policy_hits"]])
     out += section("RECENT THREADS ABOUT AI, AGENTS OR BOTS",
                    [f"  {t}" for t in meta.get("ai_threads", [])])
+    out += section("PROJECT CONVENTIONS (learned from its merged fix pull requests)",
+                   convention_summary_lines(meta.get("conventions")))
+    cl = meta.get("changelog")
+    if cl:
+        lines = [f"  The project keeps its changelog in {cl['path']}; the top of the file:"]
+        lines += [f"    | {ln}" for ln in cl["excerpt"].splitlines()]
+        lines += ["  An entry in the same style (write it in the work clone, then run repackage):",
+                  f"    {cl['suggestion']}"]
+        out += section("CHANGELOG", lines)
     out += section("DIFF CHECKS", fmt(meta["style"]))
     v = meta.get("verification")
     if v:
-        out += section("RE-VERIFICATION (after your edits)", [
+        lines = [
             f"  The test fails without the source change: {v['test_fails_without_fix']}",
             f"  The test passes with it: {v['test_passes_with_fix']}",
             f"  Tests that newly fail: {len(v['new_failures'])}",
-        ])
+            f"  Linters run: {', '.join(v.get('lint_tools') or []) or 'none detected'}",
+        ]
+        if v.get("hooks_not_run"):
+            lines.append(f"  Pre-commit hooks not run here: {', '.join(v['hooks_not_run'])}")
+        out += section("RE-VERIFICATION (after your edits)", lines)
     out += section("EVIDENCE", [
         f"  New test: {ev['test_id']} "
         f"({'re-verified by repackage' if v else 'accepted by the agent because it failed on the unmodified code'})",

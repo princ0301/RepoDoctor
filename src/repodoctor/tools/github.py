@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 import time
 import httpx
+import time
 
 from repodoctor.tools.issue_ref import IssueRef
 
@@ -13,6 +14,7 @@ MAX_COMMENTS = 5
 MAX_COMMENT_CHARS = 1_500
 TIMELINE_PAGE_SIZE = 100
 TIMELINE_MAX_PAGES = 3
+MAINTAINER_ROLES = ("OWNER", "MEMBER", "COLLABORATOR")
 
 _CLOSING = re.compile(
     r"\b(?:fix(?:e[sd])?|close[sd]?|resolve[sd]?)\b[:\s]+(?:[\w.-]+/[\w.-]+)?#(\d+)", re.I
@@ -36,6 +38,7 @@ class IssueData:
     closed_at: str = ""
     created_at: str = ""
     updated_at: str = ""
+    author_association: str = ""
 
 
 @dataclass
@@ -62,6 +65,8 @@ class RepoInfo:
     archived: bool
     disabled: bool
     private: bool
+    pushed_at: str = ""
+    description: str = ""
 
 def github_client(
     token: str = "", transport: httpx.BaseTransport | None = None
@@ -79,6 +84,67 @@ TRANSIENT = (
     httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout,
 )
 
+def _post(client: httpx.Client, path: str, body: dict) -> dict:
+    try:
+        r = client.post(path, json=body)
+    except httpx.HTTPError as e:   # not retried: a POST is not safe to repeat blindly
+        raise GitHubError(f"GitHub request failed: {type(e).__name__}: {e}") from e
+    if r.status_code in (200, 201, 202):
+        return r.json()
+    try:
+        data = r.json()
+    except ValueError:
+        data = {}
+    detail = data.get("message") or r.text[:200]
+    if data.get("errors"):
+        detail += f" {data['errors']}"
+    raise GitHubError(f"GitHub {r.status_code} for {path}: {detail}")
+
+
+def current_user(client: httpx.Client) -> str:
+    return _get(client, "/user")["login"]
+
+
+def create_fork(client: httpx.Client, full_name: str) -> str:
+    """Fork a repository (GitHub returns the existing fork if there is one); the fork's name."""
+    return _post(client, f"/repos/{full_name}/forks", {})["full_name"]
+
+
+def wait_for_repo(
+    client: httpx.Client, full_name: str, *, tries: int = 30, delay: float = 2.0, sleep=time.sleep
+) -> None:
+    for _ in range(tries):
+        try:
+            _get(client, f"/repos/{full_name}")
+            return
+        except GitHubError:
+            sleep(delay)
+    raise GitHubError(f"the fork {full_name} did not become available")
+
+
+def sync_fork(client: httpx.Client, fork_full_name: str, branch: str) -> bool:
+    """Fast-forward the fork's branch to upstream (best effort; keeps old forks pushable)."""
+    try:
+        _post(client, f"/repos/{fork_full_name}/merge-upstream", {"branch": branch})
+        return True
+    except GitHubError:
+        return False
+
+
+def find_pull_request(client: httpx.Client, full_name: str, head: str) -> str | None:
+    """URL of an existing pull request from `head` ('owner:branch') into this repo."""
+    found = _get(client, f"/repos/{full_name}/pulls", head=head, state="all")
+    return found[0]["html_url"] if found else None
+
+
+def create_pull_request(
+    client: httpx.Client, full_name: str, *, title: str, body: str, head: str, base: str,
+    draft: bool = False,
+) -> dict:
+    return _post(client, f"/repos/{full_name}/pulls", {
+        "title": title, "body": body, "head": head, "base": base,
+        "maintainer_can_modify": True, "draft": draft,
+    })
 
 def _get(client: httpx.Client, path: str, **params):
     last: Exception | None = None
@@ -117,6 +183,7 @@ def parse_issue(d: dict, comments: list[str] | None = None) -> IssueData:
         is_pull_request="pull_request" in d,
         created_at=d.get("created_at") or "",
         updated_at=d.get("updated_at") or "",
+        author_association=d.get("author_association") or "",
     )
 
 
@@ -316,11 +383,22 @@ def closed_issue_numbers(text: str) -> list[int]:
     """Issue numbers a PR description closes ('Fixes #12', 'Closes #3')."""
     return sorted(_closed_numbers(text))
 
-def fetch_comments(client: httpx.Client, ref: IssueRef, limit: int = 100) -> list[tuple[str, str]]:
+def fetch_comments_full(client: httpx.Client, ref: IssueRef, limit: int = 100) -> list[dict]:
     data = _get(
         client, f"/repos/{ref.full_name}/issues/{ref.number}/comments", per_page=min(limit, 100)
     )
-    return [((c.get("user") or {}).get("login", "?"), c.get("body") or "") for c in data[:limit]]
+    return [
+        {
+            "login": (c.get("user") or {}).get("login", "?"),
+            "body": c.get("body") or "",
+            "role": c.get("author_association") or "",
+        }
+        for c in data[:limit]
+    ]
+
+
+def fetch_comments(client: httpx.Client, ref: IssueRef, limit: int = 100) -> list[tuple[str, str]]:
+    return [(c["login"], c["body"]) for c in fetch_comments_full(client, ref, limit)]
 
 def linked_pull_requests(client: httpx.Client, ref: IssueRef) -> list[LinkedPR]:
     """Pull requests of the same repo that mention the issue (from its timeline)."""
@@ -345,6 +423,8 @@ def fetch_repo_info(client: httpx.Client, full_name: str) -> RepoInfo:
         archived=bool(d.get("archived")),
         disabled=bool(d.get("disabled")),
         private=bool(d.get("private")),
+        pushed_at=d.get("pushed_at") or "",
+        description=d.get("description") or "",
     )
 
 def list_recent_threads(

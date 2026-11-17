@@ -6,12 +6,25 @@ from pathlib import Path
 POLICY_FILES = (
     "CONTRIBUTING.md",
     "CONTRIBUTING.rst",
+    "CONTRIBUTING",
     ".github/CONTRIBUTING.md",
     "docs/CONTRIBUTING.md",
     "docs/contributing.md",
+    "docs/contributing.rst",
+    "docs/contributing/index.md",
+    "docs/development/contributing.rst",
+    "docs/source/contributing.rst",
+    "doc/contributing.rst",
     "AI_POLICY.md",
+    "AI_POLICY.rst",
     "AI-POLICY.md",
     ".github/AI_POLICY.md",
+    ".github/AI-POLICY.md",
+    "docs/AI_POLICY.md",
+    ".github/pull_request_template.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    "pull_request_template.md",
+    "PULL_REQUEST_TEMPLATE.md",
 )
 _AI = re.compile(
     r"\bAI\b|\bLLMs?\b|large language model|copilot|chatgpt|generative"

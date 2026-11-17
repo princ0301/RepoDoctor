@@ -40,6 +40,7 @@ from repodoctor.runner import (
     run_fix,
     run_fix_issue,
 )
+from repodoctor.tools.conventions import convention_summary_lines, load_or_mine
 from repodoctor.tools.github import (
     GitHubError,
     fetch_file_text,
@@ -73,9 +74,10 @@ from repodoctor.tools.repo import (
     remove_dir,
     run_git,
 )
-from repodoctor.tools.repo_config import ignored_paths, with_ignores
+from repodoctor.tools.repo_config import apply_overrides
 from repodoctor.tools.sandbox import Sandbox, SandboxError, ensure_image, image_exists
-from repodoctor.tools.triage import TriageResult, run_triage, scan_repo
+from repodoctor.tools.submit import preflight, render_plan, submit_package
+from repodoctor.tools.triage import TriageResult, repo_level, run_triage, scan_repo
 
 # Loads .env into os.environ so LangSmith picks up LANGSMITH_* variables
 load_dotenv()
@@ -116,7 +118,7 @@ def _clone_and_detect(ref: IssueRef) -> tuple[Path, ProjectInfo]:
     except GitError as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
-    return dest, with_ignores(detect_project(dest), ignored_paths(ref.full_name))
+    return dest, apply_overrides(detect_project(dest), ref.full_name)
 
 
 def _print_result(final: dict, settings: Settings) -> None:
@@ -177,6 +179,7 @@ def doctor() -> None:
         typer.echo("OK      NVIDIA_API_KEY")
     else:
         typer.echo("INFO    NVIDIA_API_KEY not set (NVIDIA models via OpenRouter only)")
+    typer.echo(f"INFO    GITHUB_PUSH_TOKEN {'set' if s.github_push_token else 'not set (needed only for submit)'}")
 
     typer.echo(f"INFO    DRY_RUN={s.dry_run}")
     typer.echo(f"INFO    explore={s.llm_explore}  fix={s.llm_fix}")
@@ -453,11 +456,18 @@ def fix_issue(
             typer.echo("ERROR   triage says skip now: no package prepared")
             raise typer.Exit(1)
         try:
+            with github_client(settings.github_token) as client:
+                conv = load_or_mine(client, ref.full_name, settings.conventions_dir)
+        except GitHubError as e:
+            typer.echo(f"WARN    could not read the project's conventions: {e}")
+            conv = None
+        try:
             pkg = prepare_package(
                 ref=ref, issue=fresh.issue, final=final, workdir=intake.workdir,
                 settings=settings, triage=fresh.report, repo_info=fresh.repo,
                 policy_hits=fresh.policy_hits,
                 ai_threads=fresh.ai_threads,
+                conventions=conv,
             )
         except (PackageError, GitError) as e:
             typer.echo(f"ERROR   {e}")
@@ -982,6 +992,29 @@ def triage(url: str) -> None:
     raise typer.Exit(1 if result.report.verdict == "skip" else 0)
 
 
+@app.command("triage-repo")
+def triage_repo_cmd(repo: str) -> None:
+    """Is this project a reasonable place to contribute? Maintenance, activity, AI policy."""
+    settings = get_settings()
+    if "/" not in repo:
+        typer.echo("ERROR   use OWNER/REPO")
+        raise typer.Exit(1)
+    try:
+        with github_client(settings.github_token) as client:
+            level = repo_level(client, repo)
+    except GitHubError as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    typer.echo(f"{repo}: {level.report.verdict.upper()} (default branch {level.repo.default_branch})")
+    for f in level.report.findings:
+        typer.echo(f"  [{f.level:<4}] {f.message}")
+    for hit in level.policy_hits[:6]:
+        typer.echo(f"  policy: {hit}")
+    for t in level.ai_threads[:5]:
+        typer.echo(f"  ai-thread: {t}")
+    raise typer.Exit(1 if level.report.verdict == "skip" else 0)
+
+
 @app.command()
 def review(
     package: Path = typer.Argument(..., exists=True, file_okay=False, help="A package folder"),
@@ -1009,8 +1042,49 @@ def repackage_cmd(
     typer.echo(f"  the test fails without the source change: {v['test_fails_without_fix']}")
     typer.echo(f"  the test passes with it:                  {v['test_passes_with_fix']}")
     typer.echo(f"  tests that newly fail:                    {len(v['new_failures'])}")
+    typer.echo(f"  linters run:                              "
+               f"{', '.join(v.get('lint_tools') or []) or 'none detected'}")
+    if v.get("hooks_not_run"):
+        typer.echo(f"  pre-commit hooks not run here:            {', '.join(v['hooks_not_run'])}")
     typer.echo("Any earlier approval was cleared.\n")
     _review_flow(package, settings)
+
+
+@app.command()
+def conventions(
+    repo: str,
+    limit: int = typer.Option(20, help="How many recent merged fix PRs to examine"),
+    refresh: bool = typer.Option(False, "--refresh", help="Ignore the cache (kept 7 days)"),
+) -> None:
+    """Learn how a project's merged bug-fix PRs look: tests, changelog, PR template (read-only)."""
+    settings = get_settings()
+    if "/" not in repo:
+        typer.echo("ERROR   use OWNER/REPO")
+        raise typer.Exit(1)
+    if not settings.github_token:
+        typer.echo("WARN    GITHUB_TOKEN not set: this takes about 30 API requests (limit 60/hour)")
+    try:
+        with github_client(settings.github_token) as client:
+            conv = load_or_mine(client, repo, settings.conventions_dir, limit=limit, refresh=refresh)
+    except GitHubError as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    typer.echo(repo)
+    for line in convention_summary_lines(conv):
+        typer.echo(line)
+    style = conv.get("changelog_style")
+    if style:
+        typer.echo("\nTop of the changelog:")
+        for line in style["excerpt"].splitlines():
+            typer.echo(f"  | {line}")
+        typer.echo(f"Entries look like: {style['prefix']}...{style['ref'].replace('{n}', 'N')}")
+    if conv.get("pr_template"):
+        typer.echo("\nPR template:")
+        for line in conv["pr_template"].strip().splitlines()[:25]:
+            typer.echo(f"  | {line}")
+    recent = [f"#{p['number']} {p['title'][:60]}" for p in conv["prs"][:5]]
+    if recent:
+        typer.echo("\nExamined (most recent first): " + "; ".join(recent))
 
 
 @app.command("triage-scan")
@@ -1042,7 +1116,8 @@ def triage_scan(
     typer.echo("")
     for r in candidates:
         labels = f"  ({', '.join(r.labels)})" if r.labels else ""
-        typer.echo(f"{r.verdict:<5} #{r.number}  {r.title[:70]}{labels}")
+        tag = "  [maintainer involved]" if r.maintainer else ""
+        typer.echo(f"{r.verdict:<5} #{r.number}  {r.title[:70]}{labels}{tag}")
         for note in r.notes:
             typer.echo(f"        - {note}")
     if not candidates:
@@ -1058,6 +1133,42 @@ def triage_scan(
             "\nNext: uv run repodoctor fix-issue "
             f"https://github.com/{repo}/issues/{candidates[0].number} --prepare-pr"
         )
+
+
+@app.command()
+def submit(
+    package: Path = typer.Argument(..., exists=True, file_okay=False, help="An approved package"),
+    draft: bool = typer.Option(False, "--draft", help="Open the pull request as a draft"),
+) -> None:
+    """Fork, push and open the pull request for an approved package (needs DRY_RUN=false)."""
+    settings = get_settings()
+    try:
+        with github_client(settings.github_token) as read, \
+                github_client(settings.github_push_token) as push:
+            plan = preflight(package, settings, read_client=read, push_client=push)
+            typer.echo(render_plan(plan))
+            if not plan.ok:
+                typer.echo("\nNot submitting: fix the blocking items above.")
+                raise typer.Exit(1)
+            if settings.dry_run:
+                typer.echo(
+                    "\nDRY_RUN is on, so nothing was sent. To submit for real, set it for this "
+                    'session only (PowerShell: $env:DRY_RUN = "false") and run the same command.'
+                )
+                return
+            answer = typer.prompt(
+                f"\nType SUBMIT to open this pull request on {plan.repo}",
+                default="", show_default=False,
+            )
+            if answer.strip() != "SUBMIT":
+                typer.echo("Cancelled.")
+                return
+            meta = submit_package(package, settings, client=push, draft=draft)
+    except (PackageError, GitHubError, GitError) as e:
+        typer.echo(f"ERROR   {e}")
+        raise typer.Exit(1) from e
+    typer.echo(f"\nOpened: {meta['submission']['url']}")
+    typer.echo("It is your pull request now: watch it and answer the maintainers.")
 
 
 if __name__ == "__main__":

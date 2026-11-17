@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     # --- GitHub (classic token, public_repo scope) ---
     github_token: str = ""
+    github_push_token: str = ""     # used only by `submit`; keep it separate and short-lived
     github_username: str = ""
     allowed_repos: str = ""        # comma-separated "owner/repo,owner2/repo2"
     dry_run: bool = True           # True = never push or open a PR
@@ -44,13 +45,16 @@ class Settings(BaseSettings):
 
     # --- Paths ---
     work_dir: Path = Path(".repodoctor/work")   # where repos get cloned (gitignored)
+    conventions_dir: Path = Path(".repodoctor/conventions")
 
     # --- PR preparation ---
     prs_dir: Path = Path(".repodoctor/prs")
     pr_max_diff_lines: int = 300
     pr_max_files: int = 8
+    max_prs_per_day: int = 1
     git_author_name: str = ""     # default: your GitHub username
     git_author_email: str = ""    # default: <username>@users.noreply.github.com
+    commit_trailer: str = "Assisted-by: RepoDoctor ({model})"   # empty = no trailer
 
     @property
     def allowed_repo_list(self) -> list[str]:

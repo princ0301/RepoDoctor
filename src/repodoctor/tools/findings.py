@@ -3,6 +3,8 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
+TODO_MARKER = "TODO(reviewer)"   # text that a human must replace before anything is approved
+
 LEVELS = ("info", "warn", "skip")
 
 

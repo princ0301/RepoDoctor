@@ -1,9 +1,10 @@
-"""Deterministic triage: is this issue a reasonable target for an automated change?
+"""Deterministic triage: is this issue, and this project, a reasonable target?
 
 Uses only GitHub's API. No model calls, no cloning.
 """
 
 import re
+import statistics
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -14,8 +15,11 @@ from repodoctor.tools.github import (
     GitHubError,
     IssueData,
     LinkedPR,
+    MAINTAINER_ROLES,
     RepoInfo,
+    _get,
     fetch_comments,
+    fetch_comments_full,
     fetch_file_text,
     fetch_issue,
     fetch_repo_info,
@@ -27,8 +31,9 @@ from repodoctor.tools.issue_ref import IssueRef
 from repodoctor.tools.policy import POLICY_FILES, scan_text
 
 STALE_DAYS = 730
+INACTIVE_DAYS = 90
 MAX_POLICY_HITS = 8
-MIN_DESCRIPTION_LENGTH = 60
+NOTICE_CHARS = 3000
 
 _BLOCKING_LABEL = re.compile(
     r"\b(wontfix|won't fix|invalid|duplicate|question|discussion|needs[- ]info"
@@ -58,33 +63,38 @@ _POLICY_BLOCK = re.compile(
     r"|\bno (?:ai|llm)\b",
     re.I,
 )
+_SUPERVISED = re.compile(
+    r"unsupervised|autonomous|agentic|fully[- ](?:ai|llm|machine)[- ]generated"
+    r"|entirely (?:ai|llm|machine)|without (?:any )?human|drive-?by",
+    re.I,
+)
+_ENDED = re.compile(
+    r"end of maintenance|no longer (?:actively )?maintained|unmaintained"
+    r"|not maintained anymore|no further releases|final release of"
+    r"|end(?:ed|ing)? (?:its |their |the )?(?:active )?development"
+    r"|project is (?:dead|abandoned)",
+    re.I,
+)
+_SEEKING = re.compile(
+    r"looking for (?:a |new |co-?)?maintainers?|seeking (?:a )?(?:new )?maintainers?"
+    r"|maintainers? wanted|needs? (?:a )?(?:new )?maintainers?|maintenance mode"
+    r"|limited maintenance",
+    re.I,
+)
 _AI_TITLE = re.compile(
     r"\b(?:ai|llms?|gpt|chatgpt|copilot|claude|slop|spam)\b"
     r"|(?<!user )(?<!user-)\bagents?\b|\bbots?\b",
     re.I,
 )
-
-
-def ai_thread_findings(threads: list[tuple[int, str, bool]]) -> tuple[list[str], list[Finding]]:
-    hits = [
-        f"#{n} {'(pull request) ' if is_pr else ''}{title}"
-        for n, title, is_pr in threads if _AI_TITLE.search(title)
-    ]
-    if not hits:
-        return [], []
-    more = f" (+{len(hits) - 1} more)" if len(hits) > 1 else ""
-    return hits[:5], [Finding(
-        "warn", "ai_threads",
-        f"Recent issues or pull requests discuss AI, agents or bots; read them before "
-        f"contributing: {hits[0]}{more}",
-    )]
-
-
-def _ai_threads(client: httpx.Client, full_name: str) -> tuple[list[str], list[Finding]]:
-    try:
-        return ai_thread_findings(list_recent_threads(client, full_name))
-    except GitHubError:
-        return [], []
+_REJECTED_AI = re.compile(
+    r"\brejected\W{0,3}(?:ai|llm)\b|\b(?:ai|llm)[ -](?:junk|slop|spam)\b", re.I
+)
+MIN_REJECTED_AI = 3
+_README = ("README.md", "README.rst", "README.txt", "README")
+_CHANGES = (
+    "CHANGELOG", "CHANGELOG.md", "CHANGELOG.rst", "CHANGES", "CHANGES.rst", "CHANGES.md",
+    "HISTORY.md", "HISTORY.rst", "NEWS",
+)
 
 
 def _parse_time(value: str) -> datetime | None:
@@ -95,6 +105,8 @@ def _parse_time(value: str) -> datetime | None:
     except ValueError:
         return None
 
+
+# ---------- the issue ----------
 
 def triage_issue(
     issue: IssueData, comments: list[tuple[str, str]], *, me: str, now: datetime
@@ -132,7 +144,7 @@ def triage_issue(
             "warn", "no_code_sample",
             "No code sample or traceback: the agent has little to reproduce the bug from.",
         )
-    if len(body.strip()) < MIN_DESCRIPTION_LENGTH:
+    if len(body.strip()) < 60:
         r.add("warn", "short_description", "The description is very short.")
 
     updated = _parse_time(issue.updated_at)
@@ -169,6 +181,8 @@ def triage_links(linked: list[LinkedPR]) -> Report:
     return r
 
 
+# ---------- the project ----------
+
 def triage_repo(repo: RepoInfo) -> Report:
     r = Report()
     if repo.archived:
@@ -184,15 +198,22 @@ def policy_findings(hits: list[str]) -> list[Finding]:
     if not hits:
         return []
     blocking = [h for h in hits if _POLICY_BLOCK.search(h.split(": ", 1)[-1])]
-    if blocking:
+    hard = [h for h in blocking if not _SUPERVISED.search(h.split(": ", 1)[-1])]
+    if hard:
         return [Finding(
             "skip", "policy_blocks_ai",
-            f"The contribution docs seem to restrict AI-generated contributions: {blocking[0]}",
+            f"The project's docs seem to restrict AI-generated contributions: {hard[0]}",
+        )]
+    if blocking:
+        return [Finding(
+            "warn", "policy_restricts_unsupervised_ai",
+            "The project's docs restrict unsupervised or fully AI-generated contributions. "
+            "Yours is reviewed by a human, but read the policy and follow its disclosure "
+            f"rules: {blocking[0]}",
         )]
     return [Finding(
         "warn", "policy_mentions_ai",
-        f"The contribution docs mention AI ({len(hits)} line(s)); read them first. "
-        f"First: {hits[0]}",
+        f"The project's docs mention AI ({len(hits)} line(s)); read them first. First: {hits[0]}",
     )]
 
 
@@ -208,6 +229,164 @@ def remote_policy_hits(client: httpx.Client, ref: IssueRef, branch: str) -> list
             break
     return hits
 
+
+def ai_thread_findings(threads: list[tuple[int, str, bool]]) -> tuple[list[str], list[Finding]]:
+    hits: list[str] = []
+    rejected: list[str] = []
+    for n, title, is_pr in threads:
+        if not _AI_TITLE.search(title):
+            continue
+        line = f"#{n} {'(pull request) ' if is_pr else ''}{title}"
+        hits.append(line)
+        if _REJECTED_AI.search(title):
+            rejected.append(line)
+    if not hits:
+        return [], []
+    shown = (rejected or hits)[:5]
+    if len(rejected) >= MIN_REJECTED_AI:
+        return shown, [Finding(
+            "skip", "maintainers_reject_ai",
+            f"{len(rejected)} of the last {len(threads)} issues and pull requests are titled as "
+            f"rejected AI submissions (for example {rejected[0]}). The maintainers are turning "
+            "this kind of contribution away.",
+        )]
+    more = f" (+{len(hits) - 1} more)" if len(hits) > 1 else ""
+    return shown, [Finding(
+        "warn", "ai_threads",
+        f"Recent issues or pull requests discuss AI, agents or bots; read them before "
+        f"contributing: {hits[0]}{more}",
+    )]
+
+
+def _ai_threads(client: httpx.Client, full_name: str) -> tuple[list[str], list[Finding]]:
+    try:
+        return ai_thread_findings(list_recent_threads(client, full_name))
+    except GitHubError:
+        return [], []
+
+
+def _snippet(text: str, m: re.Match) -> str:
+    return " ".join(text[max(0, m.start() - 40): m.end() + 80].split())
+
+
+def notice_findings(texts: dict[str, str]) -> list[Finding]:
+    """Maintenance notices near the top of the README, changelog or repository description."""
+    weak: Finding | None = None
+    for name, text in texts.items():
+        head = text[:NOTICE_CHARS]
+        if m := _ENDED.search(head):
+            return [Finding(
+                "skip", "maintenance_ended",
+                f"{name} says the project is no longer maintained: ...{_snippet(head, m)}...",
+            )]
+        if weak is None and (m := _SEEKING.search(head)):
+            weak = Finding(
+                "warn", "maintenance_notice",
+                f"{name} mentions limited maintenance: ...{_snippet(head, m)}...",
+            )
+    return [weak] if weak else []
+
+
+def activity_findings(
+    pulls: list[dict], repo: RepoInfo, now: datetime
+) -> tuple[list[Finding], dict]:
+    recent = []
+    for p in pulls:
+        merged = _parse_time(p.get("merged_at") or "")
+        if merged and (now - merged).days <= INACTIVE_DAYS:
+            recent.append((p, merged))
+    hours = []
+    for p, merged in recent:
+        created = _parse_time(p.get("created_at") or "")
+        if created:
+            hours.append((merged - created).total_seconds() / 3600)
+    stats = {
+        "merged_recent": len(recent),
+        "median_hours_to_merge": round(statistics.median(hours)) if hours else None,
+    }
+    if not recent:
+        pushed = (repo.pushed_at or "")[:10] or "unknown"
+        return [Finding(
+            "warn", "inactive",
+            f"No pull request was merged in the last {INACTIVE_DAYS} days (last push: {pushed}); "
+            "a new pull request may wait a long time.",
+        )], stats
+    median = (
+        f"; median time to merge {stats['median_hours_to_merge']} hours" if hours else ""
+    )
+    return [Finding(
+        "info", "activity",
+        f"{len(recent)} pull request(s) merged in the last {INACTIVE_DAYS} days{median}.",
+    )], stats
+
+
+def repo_health(
+    client: httpx.Client, full_name: str, repo: RepoInfo, now: datetime | None = None
+) -> tuple[Report, dict]:
+    """Is the project still maintained? Looks at the README, the changelog and recent merges."""
+    now = now or datetime.now(UTC)
+    owner, _, name = full_name.partition("/")
+    ref = IssueRef(owner, name, 0)
+    texts: dict[str, str] = {}
+    if repo.description:
+        texts["The repository description"] = repo.description
+    for group in (_README, _CHANGES):
+        for rel in group:
+            try:
+                text = fetch_file_text(client, ref, rel, repo.default_branch) or ""
+            except GitHubError:
+                continue
+            if text.strip():
+                texts[rel] = text
+                break
+    report = Report()
+    report.extend(notice_findings(texts))
+    stats: dict = {}
+    if report.verdict != "skip":
+        try:
+            pulls = _get(
+                client, f"/repos/{full_name}/pulls",
+                state="closed", sort="updated", direction="desc", per_page=100,
+            )
+        except GitHubError:
+            pulls = None
+        if pulls is not None:
+            found, stats = activity_findings(pulls, repo, now)
+            report.extend(found)
+    return report, stats
+
+
+@dataclass
+class RepoLevel:
+    repo: RepoInfo
+    report: Report
+    policy_hits: list[str]
+    ai_threads: list[str]
+    stats: dict
+
+
+def repo_level(
+    client: httpx.Client, full_name: str, now: datetime | None = None
+) -> RepoLevel:
+    """Everything that concerns the project as a whole (no issue involved)."""
+    now = now or datetime.now(UTC)
+    owner, _, name = full_name.partition("/")
+    repo = fetch_repo_info(client, full_name)
+    report = triage_repo(repo)
+    if report.verdict == "skip":
+        return RepoLevel(repo, report, [], [], {})
+    health, stats = repo_health(client, full_name, repo, now)
+    report.extend(health.findings)
+    if report.verdict == "skip":
+        return RepoLevel(repo, report, [], [], stats)
+    hits = remote_policy_hits(client, IssueRef(owner, name, 0), repo.default_branch)
+    report.extend(policy_findings(hits))
+    threads, thread_findings = _ai_threads(client, full_name)
+    report.extend(thread_findings)
+    return RepoLevel(repo, report, hits, threads, stats)
+
+
+# ---------- one issue ----------
 
 @dataclass
 class TriageResult:
@@ -233,6 +412,11 @@ def run_triage(
     if report.verdict == "skip":
         return TriageResult(report, issue, repo, [], [])
 
+    health, _ = repo_health(client, ref.full_name, repo, now)
+    report.extend(health.findings)
+    if report.verdict == "skip":
+        return TriageResult(report, issue, repo, [], [])
+
     report.extend(triage_links(linked_pull_requests(client, ref)).findings)
     hits = remote_policy_hits(client, ref, repo.default_branch)
     report.extend(policy_findings(hits))
@@ -241,6 +425,8 @@ def run_triage(
     return TriageResult(report, issue, repo, hits, threads)
 
 
+# ---------- many issues ----------
+
 @dataclass
 class ScanRow:
     number: int
@@ -248,6 +434,7 @@ class ScanRow:
     verdict: str
     labels: list[str]
     notes: list[str]      # the warn and skip messages
+    maintainer: bool | None = None
 
 
 @dataclass
@@ -270,29 +457,21 @@ def scan_repo(
     scan: int = 30,
     now: datetime | None = None,
 ) -> ScanResult:
-    """Triage the most recent open, unassigned issues of a repository.
-
-    Costs roughly 1 request per issue for comments, plus 2 to 4 for linked pull requests
-    on those that pass.
-    """
+    """Triage the most recent open, unassigned issues of a repository."""
     now = now or datetime.now(UTC)
     owner, _, name = full_name.partition("/")
-    repo = fetch_repo_info(client, full_name)
-    repo_report = triage_repo(repo)
-    hits: list[str] = []
-    threads: list[str] = []
-    if repo_report.verdict != "skip":
-        hits = remote_policy_hits(client, IssueRef(owner, name, 0), repo.default_branch)
-        repo_report.extend(policy_findings(hits))
-        threads, thread_findings = _ai_threads(client, full_name)
-        repo_report.extend(thread_findings)
-    if repo_report.verdict == "skip":
-        return ScanResult(repo, repo_report, hits, [], threads)
+    level = repo_level(client, full_name, now)
+    if level.report.verdict == "skip":
+        return ScanResult(level.repo, level.report, level.policy_hits, [], level.ai_threads)
 
     rows: list[ScanRow] = []
     for number, issue in list_open_issues(client, full_name, scan):
         ref = IssueRef(owner, name, number)
-        report = triage_issue(issue, fetch_comments(client, ref), me=me, now=now)
+        full = fetch_comments_full(client, ref)
+        report = triage_issue(issue, [(c["login"], c["body"]) for c in full], me=me, now=now)
+        involved = issue.author_association in MAINTAINER_ROLES or any(
+            c["role"] in MAINTAINER_ROLES for c in full
+        )
         if report.verdict != "skip":
             try:
                 report.extend(triage_links(linked_pull_requests(client, ref)).findings)
@@ -301,6 +480,7 @@ def scan_repo(
         rows.append(ScanRow(
             number, issue.title, report.verdict, issue.labels,
             [f.message for f in report.findings if f.level in ("warn", "skip")],
+            involved,
         ))
-    rows.sort(key=lambda r: _ORDER[r.verdict])   # stable: keeps most-recent-first
-    return ScanResult(repo, repo_report, hits, rows, threads)
+    rows.sort(key=lambda r: (_ORDER[r.verdict], not r.maintainer))   # stable within groups
+    return ScanResult(level.repo, level.report, level.policy_hits, rows, level.ai_threads)

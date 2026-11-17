@@ -2,7 +2,7 @@ import subprocess
 import sys
 
 from repodoctor.tools.repo import ProjectInfo
-from repodoctor.tools.repo_config import ignored_paths, with_ignores
+from repodoctor.tools.repo_config import apply_overrides, ignored_paths, with_ignores
 
 
 def test_ignored_paths_are_per_repo_and_case_insensitive(tmp_path):
@@ -19,6 +19,24 @@ def test_with_ignores_appends_flags_without_touching_the_original():
     assert out.test_command == ["python", "-m", "pytest", "--ignore=a.py", "--ignore=b/"]
     assert info.test_command == ["python", "-m", "pytest"]
     assert with_ignores(info, []) is info
+
+
+def test_apply_overrides_drops_adds_and_ignores(tmp_path):
+    cfg = tmp_path / "o.json"
+    cfg.write_text(
+        '{"o/r": {"drop_args": ["-p", "no:cacheprovider"], "ignore": ["tests/slow.py"],'
+        ' "extra_args": ["-n", "4"]}}'
+    )
+    info = ProjectInfo(
+        True, test_command=["python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+    )
+    out = apply_overrides(info, "O/R", cfg)
+    assert out.test_command == [
+        "python", "-m", "pytest", "-q", "--ignore=tests/slow.py", "-n", "4",
+    ]
+    assert info.test_command[-1] == "no:cacheprovider"
+    assert apply_overrides(info, "other/repo", cfg).test_command == info.test_command
+    assert apply_overrides(ProjectInfo(False), "o/r", cfg).supported is False
 
 
 def test_pytest_really_skips_an_ignored_file_in_a_full_run(tmp_path):

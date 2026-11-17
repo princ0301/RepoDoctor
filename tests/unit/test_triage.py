@@ -11,6 +11,8 @@ from repodoctor.tools.github import (
 )
 from repodoctor.tools.issue_ref import IssueRef
 from repodoctor.tools.triage import (
+    activity_findings,
+    notice_findings,
     policy_findings,
     run_triage,
     triage_issue,
@@ -233,6 +235,25 @@ def test_ai_thread_titles_are_found_but_user_agent_is_not():
     assert findings[0].level == "warn" and findings[0].code == "ai_threads"
 
 
+def test_scan_marks_issues_a_maintainer_filed_or_answered():
+    items = [list_item(1), list_item(2, author_association="MEMBER"), list_item(3)]
+    routes = scan_routes(items)
+    routes["/repos/o/r/issues/3/comments"] = [
+        {"user": {"login": "m"}, "body": "Confirmed, thanks.", "author_association": "COLLABORATOR"}
+    ]
+    rows = {r.number: r.maintainer for r in scan_repo(mock_client(routes), "o/r", now=NOW).rows}
+    assert rows == {1: False, 2: True, 3: True}
+
+
+def test_threads_marked_as_rejected_ai_block_the_project():
+    threads = [(n, f"[rejected AI] bug {n}", False) for n in (1, 2, 3)] + [(9, "Fix typo", True)]
+    hits, findings = ai_thread_findings(threads)
+    assert (findings[0].level, findings[0].code) == ("skip", "maintainers_reject_ai")
+    assert len(hits) == 3
+    two = ai_thread_findings([(1, "[rejected AI] x", False), (2, "AI junk", True)])[1][0]
+    assert two.level == "warn"
+
+
 def test_run_triage_reports_threads_about_agents():
     routes = {**issue_routes(), "/repos/o/r/issues": [
         {"number": 512, "title": "Low quality duplicate PRs caused by agent projects"},
@@ -240,3 +261,50 @@ def test_run_triage_reports_threads_about_agents():
     result = run_triage(mock_client(routes), REF, me="me", now=NOW)
     assert result.ai_threads == ["#512 Low quality duplicate PRs caused by agent projects"]
     assert "ai_threads" in codes(result.report)
+
+
+def test_an_end_of_maintenance_notice_blocks_the_project():
+    texts = {"CHANGELOG": "Release 1.0\n\nEnd of Maintenance\n\nNo further releases are planned.\n"}
+    (f,) = notice_findings(texts)
+    assert (f.level, f.code) == ("skip", "maintenance_ended") and "CHANGELOG" in f.message
+
+
+def test_a_call_for_maintainers_is_only_a_warning():
+    (f,) = notice_findings({"README.md": "This project is looking for new maintainers.\n"})
+    assert (f.level, f.code) == ("warn", "maintenance_notice")
+    assert notice_findings({"README.md": "A fast parser.\n"}) == []
+
+
+def test_activity_counts_recent_merges_and_warns_when_there_are_none():
+    pulls = [
+        {"merged_at": "2026-11-05T00:00:00Z", "created_at": "2026-11-04T12:00:00Z"},
+        {"merged_at": None, "created_at": "2026-11-01T00:00:00Z"},
+        {"merged_at": "2025-01-01T00:00:00Z", "created_at": "2024-12-30T00:00:00Z"},
+    ]
+    repo = RepoInfo("main", False, False, False, pushed_at="2026-11-05T00:00:00Z")
+    found, stats = activity_findings(pulls, repo, NOW)
+    assert stats == {"merged_recent": 1, "median_hours_to_merge": 12}
+    assert found[0].code == "activity"
+    found, stats = activity_findings(pulls[2:], repo, NOW)
+    assert stats["merged_recent"] == 0 and found[0].code == "inactive"
+    assert "2026-11-05" in found[0].message
+
+
+def test_a_notice_against_unsupervised_agents_is_a_warning_not_a_ban():
+    hits = ["pull_request_template.md:6: **Unsupervised agentic contributions are not accepted.**"]
+    (f,) = policy_findings(hits)
+    assert (f.level, f.code) == ("warn", "policy_restricts_unsupervised_ai")
+    ban = ["CONTRIBUTING.md:2: AI-generated contributions are not accepted."]
+    assert policy_findings(ban)[0].level == "skip"
+
+
+def test_run_triage_skips_a_project_that_ended_maintenance():
+    texts = {"/repos/o/r/contents/CHANGELOG": "Release 1.0\n\nEnd of Maintenance\n\nNo further releases.\n"}
+    result = run_triage(mock_client(issue_routes(), texts), REF, me="me", now=NOW)
+    assert result.report.verdict == "skip" and "maintenance_ended" in codes(result.report)
+
+
+def test_scan_stops_for_a_project_that_ended_maintenance():
+    texts = {"/repos/o/r/contents/README.md": "# lib\n\nThis project is no longer maintained.\n"}
+    result = scan_repo(mock_client(scan_routes([list_item(1)]), texts), "o/r", now=NOW)
+    assert result.repo_report.verdict == "skip" and result.rows == []

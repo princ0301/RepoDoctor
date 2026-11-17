@@ -206,7 +206,8 @@ class Sandbox:
     def install(
         self, info: ProjectInfo, *, timeout: int = INSTALL_TIMEOUT_S, attempts: int = 2
     ) -> ExecResult:
-        cmd = PIP_ENV + " && ".join(build_install_commands(self.workdir, info))
+        env = "".join(f"export {k}={shlex.quote(v)}; " for k, v in info.install_env.items())
+        cmd = PIP_ENV + env + " && ".join(build_install_commands(self.workdir, info))
         result = self.run(cmd, timeout)
         for _ in range(attempts - 1):   # a stalled download is usually transient: retry
             if result.ok or not result.timed_out:

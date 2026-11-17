@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -5,6 +7,8 @@ from repodoctor.tools.github import (
     GitHubError,
     IssueData,
     _get,
+    fetch_comments,
+    fetch_comments_full,
     fetch_issue,
     find_fixing_pr,
     format_issue_body,
@@ -13,6 +17,12 @@ from repodoctor.tools.github import (
     list_pr_files,
     list_merged_prs,
     closed_issue_numbers,
+    create_fork,
+    wait_for_repo,
+    sync_fork,
+    find_pull_request,
+    create_pull_request,
+    current_user,
 )
 from repodoctor.tools.issue_ref import IssueRef
 
@@ -75,6 +85,15 @@ def test_fetch_issue_detects_pull_requests():
 
 def test_fetch_issue_handles_empty_body():
     assert fetch_issue(client(issue_routes(body=None)), REF).body == ""
+
+
+def test_comment_roles_and_issue_author_association_are_preserved():
+    routes = issue_routes(author_association="MEMBER")
+    routes["/repos/o/r/issues/5/comments"][0]["author_association"] = "OWNER"
+    issue = fetch_issue(client(routes), REF)
+    assert issue.author_association == "MEMBER"
+    assert fetch_comments_full(client(routes), REF)[0]["role"] == "OWNER"
+    assert fetch_comments(client(routes), REF) == [("bob", "same here"), ("?", "ghost")]
 
 
 def test_not_found_is_a_clear_error():
@@ -225,3 +244,67 @@ def test_a_persistent_connection_failure_becomes_a_github_error(monkeypatch):
     c = github_client("", transport=httpx.MockTransport(handler))
     with pytest.raises(GitHubError, match="RemoteProtocolError"):
         fetch_issue(c, REF)
+
+
+def post_client(routes, calls=None):
+    def handler(request):
+        if calls is not None:
+            calls.append((request.method, request.url.path, request.content))
+        hit = routes.get((request.method, request.url.path))
+        if hit is None:
+            return httpx.Response(404, json={"message": "Not Found"})
+        return httpx.Response(hit[0], json=hit[1])
+
+    return github_client("tok", transport=httpx.MockTransport(handler))
+
+
+def test_create_fork_returns_the_forks_name_and_the_user_is_read():
+    c = post_client({
+        ("POST", "/repos/o/r/forks"): (202, {"full_name": "me/r"}),
+        ("GET", "/user"): (200, {"login": "me"}),
+    })
+    assert create_fork(c, "o/r") == "me/r" and current_user(c) == "me"
+
+
+def test_wait_for_repo_polls_until_it_exists_and_then_gives_up():
+    seen: list[int] = []
+
+    def handler(request):
+        seen.append(1)
+        return httpx.Response(200 if len(seen) >= 3 else 404, json={})
+
+    sleeps: list[float] = []
+    wait_for_repo(github_client("t", transport=httpx.MockTransport(handler)), "me/r",
+                  sleep=sleeps.append)
+    assert len(seen) == 3 and len(sleeps) == 2
+    with pytest.raises(GitHubError, match="did not become available"):
+        wait_for_repo(post_client({}), "me/r", tries=2, sleep=lambda _s: None)
+
+
+def test_post_errors_carry_githubs_message():
+    c = post_client({("POST", "/repos/o/r/pulls"): (
+        422, {"message": "Validation Failed", "errors": [{"message": "already exists"}]},
+    )})
+    with pytest.raises(GitHubError, match="422.*Validation Failed.*already exists"):
+        create_pull_request(c, "o/r", title="t", body="b", head="me:x", base="main")
+
+
+def test_create_pull_request_sends_the_expected_payload():
+    calls: list = []
+    c = post_client({("POST", "/repos/o/r/pulls"): (201, {"html_url": "u"})}, calls)
+    assert create_pull_request(
+        c, "o/r", title="t", body="b", head="me:x", base="main", draft=True
+    )["html_url"] == "u"
+    assert json.loads(calls[0][2]) == {
+        "title": "t", "body": "b", "head": "me:x", "base": "main",
+        "maintainer_can_modify": True, "draft": True,
+    }
+
+
+def test_find_pull_request_and_sync_fork():
+    c = post_client({
+        ("GET", "/repos/o/r/pulls"): (200, [{"html_url": "u9"}]),
+        ("POST", "/repos/me/r/merge-upstream"): (200, {}),
+    })
+    assert find_pull_request(c, "o/r", "me:x") == "u9"
+    assert sync_fork(c, "me/r", "main") is True and sync_fork(c, "me/other", "main") is False

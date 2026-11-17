@@ -7,7 +7,7 @@ import stat
 import subprocess
 import sys
 import tomllib
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from repodoctor.tools.issue_ref import IssueRef
@@ -107,8 +107,9 @@ class ProjectInfo:
     dependency_groups: list[str] = field(default_factory=list)
     requirement_files: list[str] = field(default_factory=list)
     requires_python: str | None = None
+    install_env: dict[str, str] = field(default_factory=dict)
 
-def detect_project(root: Path) -> ProjectInfo:
+def _detect_project(root: Path) -> ProjectInfo:
     pyproject: dict = {}
     pp = root / "pyproject.toml"
     if pp.is_file():
@@ -149,6 +150,75 @@ def detect_project(root: Path) -> ProjectInfo:
         requirement_files=req_files,
         requires_python=project.get("requires-python"),
     )
+
+
+_SCM_BACKENDS = re.compile(r"setuptools[_-]scm|hatch[_-]vcs", re.I)
+
+
+def _git_quiet(root: Path, *args: str, timeout: int = 120) -> str | None:
+    try:
+        p = subprocess.run(
+            ["git", *args], cwd=root, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
+def _scm_dist_name(root: Path) -> str | None:
+    """The distribution name, when the project takes its version from git tags."""
+    pp = root / "pyproject.toml"
+    if not pp.is_file():
+        return None
+    text = pp.read_text(encoding="utf-8", errors="ignore")
+    if not _SCM_BACKENDS.search(text):
+        return None
+    try:
+        name = tomllib.loads(text).get("project", {}).get("name")
+    except tomllib.TOMLDecodeError:
+        return None
+    return re.sub(r"[-.]+", "_", name).upper() if isinstance(name, str) and name else None
+
+
+def pretend_version(described: str) -> str | None:
+    """'v9.0.1-12-gabc1234' -> '9.0.2.dev12+gabc1234' (what setuptools-scm would report)."""
+    m = re.fullmatch(r"(?P<tag>.+)-(?P<n>\d+)-g(?P<sha>[0-9a-f]+)", described.strip())
+    if not m:
+        return None
+    release = re.search(r"\d+(?:\.\d+)*", m["tag"])
+    if not release:
+        return None
+    if int(m["n"]) == 0:
+        return release.group(0)
+    parts = release.group(0).split(".")
+    parts[-1] = str(int(parts[-1]) + 1)
+    return f"{'.'.join(parts)}.dev{m['n']}+g{m['sha']}"
+
+
+def _fetch_tags(root: Path) -> None:
+    shallow = _git_quiet(root, "rev-parse", "--is-shallow-repository") == "true"
+    args = ["fetch", "--quiet", "--tags", *(["--unshallow"] if shallow else []), "origin"]
+    _git_quiet(root, *args, timeout=1800)
+
+
+def scm_version_env(root: Path) -> dict[str, str]:
+    """Environment for the install step. Projects that read their version from git tags would
+    otherwise be installed as 0.0.0 (no tags in the clone, or no git in the container)."""
+    name = _scm_dist_name(root)
+    if not name:
+        return {}
+    described = _git_quiet(root, "describe", "--tags", "--long")
+    if described is None:
+        _fetch_tags(root)
+        described = _git_quiet(root, "describe", "--tags", "--long")
+    version = pretend_version(described) if described else None
+    return {f"SETUPTOOLS_SCM_PRETEND_VERSION_FOR_{name}": version} if version else {}
+
+
+def detect_project(root: Path) -> ProjectInfo:
+    info = _detect_project(root)
+    return replace(info, install_env=scm_version_env(root)) if info.supported else info
 
 def head_sha(root: Path) -> str:
     return run_git("rev-parse", "HEAD", cwd=root).strip()

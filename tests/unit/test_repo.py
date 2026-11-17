@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import re
 import stat
 import pytest
 
@@ -19,6 +20,8 @@ from repodoctor.tools.repo import (
     checkout_commit,
     ensure_commit,
     fetch_pull_head,
+    pretend_version,
+    scm_version_env,
 )
 
 
@@ -138,6 +141,35 @@ def test_detect_unsupported_without_pytest(tmp_path):
     write(tmp_path, "pyproject.toml", '[project]\nname = "p"\n')
     info = detect_project(tmp_path)
     assert not info.supported and "pytest" in info.reason
+
+
+@pytest.mark.parametrize("described, expected", [
+    ("9.0.1-0-gabc1234", "9.0.1"),
+    ("v9.0.1-12-gabc1234", "9.0.2.dev12+gabc1234"),
+    ("release-2.0-3-gdeadbee", "2.1.dev3+gdeadbee"),
+    ("nodigits-1-gabc1234", None),
+    ("not a describe", None),
+])
+def test_pretend_version(described, expected):
+    assert pretend_version(described) == expected
+
+
+PYPROJECT = '[build-system]\nrequires = ["setuptools_scm"]\n\n[project]\nname = "my-lib"\n'
+
+
+def test_scm_version_env_uses_the_nearest_tag(make_git_repo):
+    root = make_git_repo({"pyproject.toml": PYPROJECT})
+    run_git("tag", "v1.2.3", cwd=root)
+    (root / "a.txt").write_text("x\n")
+    commit_files(root, ["a.txt"], "more")
+    ((key, value),) = scm_version_env(root).items()
+    assert key == "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MY_LIB"
+    assert re.fullmatch(r"1\.2\.4\.dev1\+g[0-9a-f]+", value)
+
+
+def test_projects_without_tag_based_versions_or_without_tags_get_nothing(make_git_repo):
+    assert scm_version_env(make_git_repo({"pyproject.toml": "[project]\nname = 'x'\n"})) == {}
+    assert scm_version_env(make_git_repo({"pyproject.toml": PYPROJECT}, name="scm-no-tags")) == {}
 
 def test_remove_dir_missing_path_is_noop(tmp_path):
     remove_dir(tmp_path / "does-not-exist")  # must not raise

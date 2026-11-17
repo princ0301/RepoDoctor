@@ -2,5 +2,10 @@
   "pallets/werkzeug": {
     "ignore": ["tests/test_serving.py"],
     "reason": "starts servers and a reloader; test_reloader_sys_path[watchdog] hangs in the sandbox"
+  },
+  "pytest-dev/pytest": {
+    "drop_args": ["-p", "no:cacheprovider"],
+    "extra_args": ["-n", "4"],
+    "reason": "the cache fixture needs the cache plugin; 4,800 tests take about 10 minutes serially and the project supports xdist (match -n to SANDBOX_CPUS)"
   }
 }
