@@ -41,19 +41,39 @@ class ExecResult:
         return self.exit_code == 0 and not self.timed_out
 
 
-def truncate_output(text: str, max_lines: int = MAX_LINES, max_chars: int = MAX_CHARS) -> str:
-    """Keep the tail: pytest puts the failure summary at the end."""
+def clip_failure_output(text: str, max_lines: int, max_chars: int) -> str:
+    """Keep what explains a pytest failure: the start, the assertion lines, and the tail.
+
+    pytest prints a failure's 'E' lines BEFORE any captured output, so keeping only the
+    tail loses exactly the lines that say why a test failed."""
     lines = text.splitlines()
-    dropped = max(0, len(lines) - max_lines)
-    out = "\n".join(lines[-max_lines:])
-    truncated = dropped > 0
+    if len(lines) <= max_lines and len(text) <= max_chars:
+        return text
+    n = len(lines)
+    keep = set(range(min(n, max(1, max_lines // 5))))              # the start
+    keep |= set(range(max(0, n - max_lines // 2), n))              # the tail
+    budget = max_lines - len(keep)
+    for i, line in enumerate(lines):                               # the reasons, in order
+        if budget <= 0:
+            break
+        if i not in keep and (line.startswith("E ") or line.startswith("> ")):
+            keep.add(i)
+            budget -= 1
+    out_lines: list[str] = []
+    previous = -1
+    for i in sorted(keep):
+        if previous != -1 and i != previous + 1:
+            out_lines.append(f"[... {i - previous - 1} lines omitted ...]")
+        out_lines.append(lines[i])
+        previous = i
+    out = "\n".join(out_lines)
     if len(out) > max_chars:
-        out = out[-max_chars:]
-        truncated = True
-    if not truncated:
-        return out
-    note = f"[... {dropped} earlier lines truncated ...]" if dropped else "[... truncated ...]"
-    return f"{note}\n{out}"
+        out = out[: max_chars // 3] + "\n[... omitted ...]\n" + out[-(max_chars * 2 // 3):]
+    return out
+
+
+def truncate_output(text: str, max_lines: int = MAX_LINES, max_chars: int = MAX_CHARS) -> str:
+    return clip_failure_output(text, max_lines, max_chars)
 
 
 def _docker(*args: str, timeout: int = 60, check: bool = True) -> subprocess.CompletedProcess:

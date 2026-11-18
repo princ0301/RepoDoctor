@@ -1,5 +1,11 @@
 from repodoctor.tools.repo import ProjectInfo
-from repodoctor.tools.sandbox import Sandbox, build_install_commands, truncate_output, ExecResult
+from repodoctor.tools.sandbox import (
+    ExecResult,
+    Sandbox,
+    build_install_commands,
+    clip_failure_output,
+    truncate_output,
+)
 
 
 def test_truncate_small_output_unchanged():
@@ -9,13 +15,30 @@ def test_truncate_small_output_unchanged():
 def test_truncate_keeps_the_tail_and_says_so():
     text = "\n".join(f"line{i}" for i in range(1000))
     out = truncate_output(text, max_lines=5)
-    assert "line999" in out and "line0\n" not in out
-    assert "995 earlier lines truncated" in out
+    assert "line999" in out and "line0" in out
+    assert "lines omitted" in out
 
 
 def test_truncate_caps_characters():
     out = truncate_output("x" * 100_000, max_chars=100)
-    assert len(out) < 200 and "truncated" in out
+    assert len(out) < 200 and "omitted" in out
+
+
+def test_clipping_keeps_the_assertion_lines_pytest_prints_before_captured_output():
+    head = [
+        "___ test_x ___",
+        "",
+        "    def test_x():",
+        ">       assert foo() == 2",
+        "E       assert 1 == 2",
+    ]
+    captured = [f"captured line {i}" for i in range(300)]
+    text = "\n".join([*head, "----- Captured stdout call -----", *captured, "1 failed in 1s"])
+    out = clip_failure_output(text, 40, 10_000)
+    assert "E       assert 1 == 2" in out and ">       assert foo() == 2" in out
+    assert "1 failed in 1s" in out and "lines omitted" in out
+    assert "captured line 150" not in out and len(out.splitlines()) <= 45
+    assert clip_failure_output("a\nb\nc", 40, 1000) == "a\nb\nc"
 
 
 def test_install_commands_full(tmp_path):
@@ -69,5 +92,7 @@ def test_install_exports_the_projects_version_variable(tmp_path):
             seen.append(cmd)
             return ExecResult(0, "", False, 0.0)
 
-    Spy(tmp_path).install(ProjectInfo(True, install_env={"SETUPTOOLS_SCM_PRETEND_VERSION_FOR_X": "1.2.3"}))
+    Spy(tmp_path).install(
+        ProjectInfo(True, install_env={"SETUPTOOLS_SCM_PRETEND_VERSION_FOR_X": "1.2.3"})
+    )
     assert "export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_X=1.2.3; " in seen[0]
