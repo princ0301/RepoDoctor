@@ -981,7 +981,10 @@ def _review_flow(pkg: Path, settings: Settings) -> None:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e
     typer.echo(f"Approved: {pkg}")
-    typer.echo("There is no submit command yet, so nothing was pushed.")
+    typer.echo(
+        f"Nothing was sent. Next: uv run repodoctor submit {pkg} "
+        "(it only prints the plan while DRY_RUN=true)."
+    )
 
 
 @app.command()
