@@ -246,6 +246,18 @@ def test_a_persistent_connection_failure_becomes_a_github_error(monkeypatch):
         fetch_issue(c, REF)
 
 
+def test_find_pull_request_sends_the_owner_prefixed_head_filter():
+    seen: list[dict] = []
+
+    def handler(request):
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json=[])
+
+    c = github_client("t", transport=httpx.MockTransport(handler))
+    assert find_pull_request(c, "o/r", "o:repodoctor/issue-5") is None
+    assert seen[0]["head"] == "o:repodoctor/issue-5" and seen[0]["state"] == "all"
+
+
 def post_client(routes, calls=None):
     def handler(request):
         if calls is not None:

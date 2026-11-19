@@ -20,7 +20,7 @@ from repodoctor.tools.pr_package import (
     save_package,
     verify_approval,
 )
-from repodoctor.tools.repackage import repackage
+from repodoctor.tools.repackage import failure_summary, repackage
 from repodoctor.tools.repo import commit_files, get_diff, head_sha, remove_dir, run_git
 from repodoctor.tools.sandbox import ExecResult
 from repodoctor.tools.testreport import SuiteReport
@@ -324,6 +324,12 @@ def test_the_review_screen_shows_every_section(run, tmp_path):
 
 # ---------- repackage ----------
 
+def test_failure_summary_keeps_the_error_lines():
+    out = "x\nE   AssertionError: boom\nE   assert 1 == 2\ny\n" + "E  more\n" * 10
+    assert failure_summary(out, 3) == ["E   AssertionError: boom", "E   assert 1 == 2", "E  more"]
+    assert failure_summary("no errors here") == []
+
+
 def test_repackage_reverifies_and_clears_approval(run, tmp_path):
     pkg = prepare(run, tmp_path)
     fill_todo(pkg)
@@ -339,6 +345,7 @@ def test_repackage_reverifies_and_clears_approval(run, tmp_path):
     assert (v["test_fails_without_fix"], v["test_passes_with_fix"], v["new_failures"]) == (
         True, True, [],
     )
+    assert meta["verification"]["failure_without_fix"] == []
     assert "the answer" in (pkg / "change.patch").read_text(encoding="utf-8")
     assert run_git("rev-list", "--count", f"{meta['base_sha']}..HEAD", cwd=clone).strip() == "1"
     assert (clone / "app.py").read_bytes() == b"x = 2  # the answer\n"   # restored after the check

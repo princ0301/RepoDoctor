@@ -204,7 +204,7 @@ def test_submitting_to_your_own_repository_skips_the_fork(approved):
     assert pushes == ["https://github.com/o/r.git"]
     assert not any(c[1].endswith("/forks") for c in calls)
     (pr_call,) = [c for c in calls if c[:2] == ("POST", "/repos/o/r/pulls")]
-    assert pr_call[2]["head"] == "repodoctor/issue-5"
+    assert pr_call[2]["head"] == "o:repodoctor/issue-5"
 
 
 def test_an_existing_pull_request_is_reused_and_a_second_submission_is_refused(approved):

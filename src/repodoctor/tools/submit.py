@@ -256,7 +256,7 @@ def submit_package(
     clone = Path(meta["workdir"])
 
     if own:
-        head_repo, head = repo, branch
+        head_repo, head = repo, f"{repo.partition('/')[0]}:{branch}"
     else:
         head_repo = (meta.get("submission") or {}).get("fork") or create_fork(client, repo)
         wait_for_repo(client, head_repo, sleep=sleep)

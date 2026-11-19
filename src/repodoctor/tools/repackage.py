@@ -32,6 +32,11 @@ from repodoctor.tools.testreport import SuiteReport, new_failures
 __all__ = ["repackage"]
 
 
+def failure_summary(output: str, limit: int = 8) -> list[str]:
+    """The lines pytest prints to say why a test failed (they start with 'E ')."""
+    return [ln.rstrip() for ln in output.splitlines() if ln.startswith("E ")][:limit]
+
+
 def repackage(
     pkg: Path,
     settings: Settings,
@@ -89,6 +94,7 @@ def repackage(
     timeout = settings.sandbox_timeout_s
     findings: list[Finding] = []
     fails_before: bool | None = None
+    without_fix: list[str] = []
     lint_findings: list[Finding] = []
 
     with factory(root) as sb:
@@ -110,6 +116,7 @@ def repackage(
                 res, _ = sb.run_suite(info, args=[tid], timeout=timeout)
             finally:
                 run_git("checkout", head, "--", *modified, cwd=root)
+            without_fix = failure_summary(res.output)
             fails_before = res.exit_code == 1 and not res.timed_out
             if res.exit_code in (2, 3, 4, 5):
                 fails_before = None
@@ -206,6 +213,7 @@ def repackage(
             "at": datetime.now(UTC).isoformat(timespec="seconds"),
             "test_fails_without_fix": fails_before,
             "test_passes_with_fix": passes,
+            "failure_without_fix": without_fix,
             "new_failures": list(regressions)[:20],
             "lint_tools": [t.name for t in tools],
             "hooks_not_run": hooks_not_run,

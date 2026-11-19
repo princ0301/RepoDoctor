@@ -350,6 +350,9 @@ def render_review(meta: dict, patch: str, pr_text: str) -> str:
         ]
         if v.get("hooks_not_run"):
             lines.append(f"  Pre-commit hooks not run here: {', '.join(v['hooks_not_run'])}")
+        if v.get("failure_without_fix"):
+            lines.append("  Without the source change the test fails with:")
+            lines += [f"    {ln}" for ln in v["failure_without_fix"]]
         out += section("RE-VERIFICATION (after your edits)", lines)
     out += section("EVIDENCE", [
         f"  New test: {ev['test_id']} "
