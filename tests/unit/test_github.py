@@ -64,7 +64,10 @@ def issue_routes(**extra) -> dict:
             **extra,
         },
         "/repos/o/r/issues/5/comments": [
-            {"user": {"login": "bob"}, "body": "same here"},
+            {
+                "user": {"login": "bob"}, "body": "same here",
+                "created_at": "2026-11-20T12:00:00Z",
+            },
             {"user": None, "body": "ghost"},
         ],
     }
@@ -93,6 +96,8 @@ def test_comment_roles_and_issue_author_association_are_preserved():
     issue = fetch_issue(client(routes), REF)
     assert issue.author_association == "MEMBER"
     assert fetch_comments_full(client(routes), REF)[0]["role"] == "OWNER"
+    comment = fetch_comments_full(client(routes), REF)[0]
+    assert comment["created_at"] == "2026-11-20T12:00:00Z"
     assert fetch_comments(client(routes), REF) == [("bob", "same here"), ("?", "ghost")]
 
 

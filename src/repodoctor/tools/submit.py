@@ -21,6 +21,7 @@ from repodoctor.tools.github import (
     create_fork,
     create_pull_request,
     current_user,
+    fetch_comments_full,
     find_pull_request,
     sync_fork,
     wait_for_repo,
@@ -138,6 +139,37 @@ def clone_problems(meta: dict, pkg: Path) -> list[str]:
         return [str(e)]
 
 
+def _when(value: str) -> datetime | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def comment_problems(
+    client: httpx.Client, ref: IssueRef, settings: Settings, now: datetime
+) -> list[str]:
+    """A pull request to someone else's project should follow a conversation, not replace it."""
+    hours = settings.pr_min_comment_hours
+    me = settings.github_username.lower()
+    try:
+        mine = [c for c in fetch_comments_full(client, ref) if c["login"].lower() == me]
+    except GitHubError as e:
+        return [f"could not check your comments on the issue: {e}"]
+    times = [t for t in (_when(c.get("created_at", "")) for c in mine) if t]
+    if not times:
+        return [
+            "you have not commented on the issue: say what you found, in your own words, "
+            "and give the maintainers time to react before sending a pull request"
+        ]
+    if (now - min(times)).total_seconds() < hours * 3600:
+        return [
+            f"your first comment on the issue is less than {hours} hours old: "
+            "wait for a reaction before sending a pull request"
+        ]
+    return []
+
+
 def preflight(
     pkg: Path,
     settings: Settings,
@@ -164,6 +196,16 @@ def preflight(
         plan.problems.append(str(e))
     plan.problems += verify_approval(pkg)
     plan.problems += clone_problems(meta, pkg)
+    if not meta.get("verification"):
+        plan.problems.append(
+            "the package was never re-verified after the agent prepared it: edit it as a "
+            "contributor would (test placement, changelog), then run repackage"
+        )
+    plan.notes += [
+        f"package: {f['message']}" for f in meta.get("style", []) if f["level"] == "warn"
+    ]
+    if not plan.own_repo and settings.pr_min_comment_hours > 0:
+        plan.problems += comment_problems(read_client, ref, settings, now)
 
     stage = (meta.get("submission") or {}).get("stage")
     if stage == "opened":

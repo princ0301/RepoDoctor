@@ -14,10 +14,12 @@ from repodoctor.tools.pr_package import (
     PackageError,
     approve,
     blocking_findings,
+    copies_hypothesis,
     load_package,
     prepare_package,
     render_review,
     save_package,
+    tidy_hypothesis,
     verify_approval,
 )
 from repodoctor.tools.repackage import failure_summary, repackage
@@ -31,6 +33,10 @@ ISSUE = IssueData(
     labels=[], assignees=[], comments=[], is_pull_request=False,
 )
 REPO = RepoInfo("main", False, False, False)
+HYPOTHESIS = (
+    "The bug is caused by the `or None` pattern in the constructor, which treats 0 as falsy "
+    "and converts it to None, so the padding falls back to the default width."
+)
 
 
 def build_run(make_git_repo, extra=None):
@@ -112,6 +118,25 @@ def test_prepare_uses_the_projects_conventions(run, tmp_path):
     assert "tests/test_app.py" in style["new_test_file"]
 
 
+def test_no_changelog_reminder_when_past_fixes_never_touch_it(run, tmp_path):
+    root, final, _ = run
+    (root / "CHANGELOG.md").write_text("# Changes\n", encoding="utf-8")
+    records = [{
+        "number": n, "title": "t", "issues": [n], "merged_at": "x", "new_tests": [],
+        "files": [{"path": "app.py", "status": "modified", "additions": 1, "deletions": 1,
+                   "kind": "source"}],
+    } for n in (1, 2, 3)]
+    conv = {"prs": records, "stats": analyze(records), "pr_template": "",
+            "changelog_head": "", "changelog_style": None}
+    pkg = prepare_package(
+        ref=REF, issue=ISSUE, final=final, workdir=root, settings=settings(tmp_path),
+        triage=Report(), repo_info=REPO, policy_hits=[], conventions=conv,
+    )
+    assert "changelog_not_updated" not in {f["code"] for f in load_package(pkg)["style"]}
+    plain = prepare(run, tmp_path)   # no conventions learned: the reminder stays
+    assert "changelog_not_updated" in {f["code"] for f in load_package(plain)["style"]}
+
+
 def test_a_todo_left_in_the_patch_blocks_approval(run, tmp_path):
     root, final, _ = run
     pkg = prepare_conv(root, final, tmp_path)
@@ -184,6 +209,7 @@ def test_repackage_runs_the_projects_linters_and_ticks_what_it_verified(
     assert not any(f["code"] == "not_reverified" for f in meta["style"])
 
 def settings(tmp_path, **over) -> Settings:
+    over.setdefault("root_cause_mode", "human")
     return Settings(_env_file=None, github_username="me", prs_dir=tmp_path / "prs", **over)
 
 
@@ -274,6 +300,34 @@ def test_approval_waits_for_the_reviewer_to_write_the_cause(run, tmp_path):
     approve(pkg, policy_acknowledged=True)
 
 
+def test_copies_hypothesis_detects_copies_and_light_rewording_but_not_a_fresh_explanation():
+    assert copies_hypothesis(HYPOTHESIS, HYPOTHESIS)
+    assert copies_hypothesis(HYPOTHESIS.replace("constructor", "init method"), HYPOTHESIS)
+    fresh = "Zero is falsy in Python, so `x or None` quietly discards an explicit 0 argument."
+    assert not copies_hypothesis(fresh, HYPOTHESIS)
+    assert not copies_hypothesis("short", HYPOTHESIS)
+
+
+def test_a_root_cause_copied_from_the_agents_hypothesis_is_refused(run, tmp_path):
+    pkg = prepare(run, tmp_path)
+    meta = load_package(pkg)
+    meta["hypothesis"] = HYPOTHESIS
+    save_package(pkg, meta)
+    original = (pkg / "pr.md").read_text(encoding="utf-8")
+
+    def write_cause(cause: str) -> None:
+        text = "\n".join(
+            cause if "TODO(reviewer)" in ln else ln for ln in original.splitlines()
+        )
+        (pkg / "pr.md").write_bytes((text + "\n").encode("utf-8"))
+
+    write_cause(HYPOTHESIS)
+    with pytest.raises(PackageError, match="own hypothesis"):
+        approve(pkg, policy_acknowledged=True)
+    write_cause("Zero is falsy in Python, so `x or None` quietly discards an explicit 0 argument.")
+    approve(pkg, policy_acknowledged=True)
+
+
 def test_approval_records_hashes_and_detects_later_edits(run, tmp_path):
     pkg = prepare(run, tmp_path)
     assert verify_approval(pkg) == ["the package is not approved"]
@@ -350,6 +404,23 @@ def test_repackage_reverifies_and_clears_approval(run, tmp_path):
     assert run_git("rev-list", "--count", f"{meta['base_sha']}..HEAD", cwd=clone).strip() == "1"
     assert (clone / "app.py").read_bytes() == b"x = 2  # the answer\n"   # restored after the check
     assert not blocking_findings(meta)
+
+
+def test_repackage_omits_changelog_reminder_when_conventions_say_none(
+    make_git_repo, tmp_path
+):
+    root, final, _ = build_run(make_git_repo, {"CHANGELOG.md": "Past changes\n"})
+    conventions = make_conv()
+    conventions["stats"]["changelog"]["kind"] = "none"
+    pkg = prepare_package(
+        ref=REF, issue=ISSUE, final=final, workdir=root, settings=settings(tmp_path),
+        triage=Report(), repo_info=REPO, policy_hits=[], conventions=conventions,
+    )
+    meta = repackage(
+        pkg, settings(tmp_path),
+        sandbox_factory=lambda _root: FakeSandbox([1, 0], SuiteReport(total=3, passed=3)),
+    )
+    assert not any(f["code"] == "changelog_not_updated" for f in meta["style"])
 
 
 def test_repackage_blocks_a_test_that_passes_without_the_fix(run, tmp_path):
@@ -443,3 +514,74 @@ def test_repackage_uses_the_title_from_pr_md_as_the_commit_message(run, tmp_path
     assert "Assisted-by: RepoDoctor (" in run_git(
         "log", "-1", "--format=%B", cwd=Path(meta["workdir"])
     )
+
+def test_tidy_hypothesis_removes_line_numbers_and_keeps_a_few_sentences():
+    raw = (
+        "The bug is caused by the `or None` pattern on lines 474-475 of src/x/y.py, which "
+        "treats `0` as falsy and converts it to `None`. When `left=0` is passed, the "
+        "`_get` method (lines 2147-2156) falls back to the default. Third. Fourth."
+    )
+    out = tidy_hypothesis(raw)
+    assert "474" not in out and "2147" not in out and "lines" not in out
+    assert out.startswith("The bug is caused by the `or None` pattern, which treats `0` as falsy")
+    assert "method falls back to the default." in out and out.endswith("Third.")
+
+
+def agent_package(run, tmp_path, hypothesis, **extra):
+    root, final, _ = run
+    return prepare_package(
+        ref=REF, issue=ISSUE, final={**final, "hypothesis": hypothesis}, workdir=root,
+        settings=settings(tmp_path, root_cause_mode="agent"), triage=Report(),
+        repo_info=REPO, **{"policy_hits": [], **extra},
+    )
+
+
+def test_agent_mode_fills_the_root_cause(run, tmp_path):
+    pkg = agent_package(
+        run, tmp_path,
+        "The value is wrong on line 10 of app.py, so the check fails. It never recovers.",
+    )
+    text = (pkg / "pr.md").read_text(encoding="utf-8")
+    assert "TODO(reviewer)" not in text and "line 10" not in text
+    assert "The value is wrong, so the check fails." in text
+    assert "drafted by the agent" not in text
+    assert "prepared with the help of an AI agent" in text
+    assert load_package(pkg)["root_cause_mode"] == "agent"
+    approve(pkg, policy_acknowledged=True)     # no rewriting needed
+
+
+def test_agent_mode_warns_when_the_project_mentions_ai(run, tmp_path):
+    pkg = agent_package(run, tmp_path, "The value is wrong. It fails.",
+                        policy_hits=["CONTRIBUTING.md:1: AI tools welcome"])
+    assert "agent_written_description" in {f["code"] for f in load_package(pkg)["style"]}
+
+
+def test_human_mode_is_unchanged_by_the_new_setting(run, tmp_path):
+    pkg = prepare(run, tmp_path)
+    assert load_package(pkg)["root_cause_mode"] == "human"
+    with pytest.raises(PackageError, match="TODO"):
+        approve(pkg, policy_acknowledged=True)
+
+
+def test_repackage_switches_to_the_agents_root_cause_only_when_asked(run, tmp_path):
+    root, final, _ = run
+    pkg = prepare_package(
+        ref=REF, issue=ISSUE,
+        final={**final, "hypothesis": "The value is wrong on line 3 of app.py. It fails."},
+        workdir=root, settings=settings(tmp_path), triage=Report(), repo_info=REPO, policy_hits=[],
+    )
+    custom = "My own words about why the comparison used the wrong operator here."
+    lines = [custom if "TODO(reviewer)" in ln else ln
+             for ln in (pkg / "pr.md").read_text(encoding="utf-8").splitlines()]
+    (pkg / "pr.md").write_bytes(("\n".join(lines) + "\n").encode())
+
+    def sandbox():
+        return lambda _r: FakeSandbox(target=[1, 0], suite=SuiteReport(total=3, passed=3))
+
+    meta = repackage(pkg, settings(tmp_path, root_cause_mode="agent"), sandbox_factory=sandbox())
+    assert meta.get("root_cause_mode") != "agent"
+    assert custom in (pkg / "pr.md").read_text(encoding="utf-8")        # your text is left alone
+    meta = repackage(pkg, settings(tmp_path), sandbox_factory=sandbox(), agent_cause=True)
+    text = (pkg / "pr.md").read_text(encoding="utf-8")
+    assert meta["root_cause_mode"] == "agent" and "The value is wrong. It fails." in text
+    assert custom not in text

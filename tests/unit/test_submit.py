@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from repodoctor.tools.pr_package import (
     approve,
     load_package,
     prepare_package,
+    save_package,
 )
 from repodoctor.tools.repo import GitError, commit_files, get_diff, head_sha, run_git
 from repodoctor.tools.submit import (
@@ -25,7 +27,6 @@ from repodoctor.tools.submit import (
     split_pr_text,
     submit_package,
 )
-from datetime import UTC, datetime, timedelta
 
 REF = IssueRef("o", "r", 5)
 ISSUE = IssueData(
@@ -35,6 +36,10 @@ ISSUE = IssueData(
 CAUSE = "The comparison used the wrong operator, so text of exactly the maximum length was cut."
 ROUTES = {
     ("GET", "/user"): (200, {"login": "me"}),
+    ("GET", "/repos/o/r/issues/5/comments"): (200, [{
+        "user": {"login": "me"}, "body": "I found the cause",
+        "created_at": "2026-01-01T00:00:00Z", "author_association": "NONE",
+    }]),
     ("POST", "/repos/o/r/forks"): (202, {"full_name": "me/r"}),
     ("GET", "/repos/me/r"): (200, {}),
     ("POST", "/repos/me/r/merge-upstream"): (200, {}),
@@ -94,6 +99,12 @@ def approved(make_git_repo, tmp_path):
         ref=REF, issue=ISSUE, final=final, workdir=root, settings=settings, triage=Report(),
         repo_info=RepoInfo("main", False, False, False), policy_hits=[],
     )
+    meta = load_package(pkg)
+    meta["verification"] = {
+        "test_fails_without_fix": True, "test_passes_with_fix": True, "new_failures": [],
+        "lint_tools": [], "hooks_not_run": [], "failure_without_fix": [],
+    }
+    save_package(pkg, meta)
     p = pkg / "pr.md"
     lines = [CAUSE if "TODO(reviewer)" in ln else ln
              for ln in p.read_text(encoding="utf-8").splitlines()]
@@ -114,6 +125,36 @@ def test_preflight_passes_for_an_approved_unchanged_package(approved):
     plan, _, _ = check(approved)
     assert plan.ok, plan.problems
     assert not plan.own_repo and plan.title == "x is wrong"
+
+
+def test_preflight_blocks_a_package_that_was_never_reverified(approved):
+    pkg, _ = approved
+    meta = load_package(pkg)
+    meta["verification"] = None
+    save_package(pkg, meta)
+    plan, _, _ = check(approved)
+    assert any("never re-verified" in p for p in plan.problems)
+
+
+def test_third_party_submissions_need_an_older_comment_by_you(approved):
+    pkg, settings = approved
+    none = {**ROUTES, ("GET", "/repos/o/r/issues/5/comments"): (200, [])}
+    plan = preflight(pkg, settings, read_client=api(none), push_client=api(), triage_fn=triage_ok)
+    assert any("have not commented" in p for p in plan.problems)
+
+    fresh = {**ROUTES, ("GET", "/repos/o/r/issues/5/comments"): (200, [{
+        "user": {"login": "me"}, "body": "x", "author_association": "NONE",
+        "created_at": datetime.now(UTC).isoformat(),
+    }])}
+    plan = preflight(
+        pkg, settings, read_client=api(fresh), push_client=api(), triage_fn=triage_ok
+    )
+    assert any("less than 24 hours old" in p for p in plan.problems)
+
+    off = settings.model_copy(update={"pr_min_comment_hours": 0})
+    assert preflight(
+        pkg, off, read_client=api(none), push_client=api(), triage_fn=triage_ok
+    ).ok
 
 
 def test_preflight_blocks_edits_after_approval(approved):

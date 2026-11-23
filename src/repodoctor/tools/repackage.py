@@ -19,9 +19,13 @@ from repodoctor.tools.lint import detect_lint_tools, exists_at, install_command,
 from repodoctor.tools.pr_package import (
     PackageError,
     commit_message,
+    copies_hypothesis,
     load_package,
+    root_cause_section,
     save_package,
+    tidy_hypothesis,
     trailer_text,
+    with_agent_cause,
 )
 from repodoctor.tools.repo import detect_project, get_diff_since, head_sha, run_git
 from repodoctor.tools.repo_config import apply_overrides
@@ -43,12 +47,25 @@ def repackage(
     *,
     test_id: str | None = None,
     sandbox_factory: Callable[[Path], Any] | None = None,
+    agent_cause: bool = False,
 ) -> dict:
     meta = load_package(pkg)
     if not meta.get("baseline"):
         raise PackageError(
             "this package was prepared by an older version: run fix-issue --prepare-pr again"
         )
+    use_agent = agent_cause or settings.root_cause_mode.strip().lower() == "agent"
+    if use_agent and meta.get("root_cause_mode") != "agent":
+        cause = tidy_hypothesis(meta.get("hypothesis") or "")
+        current = (pkg / "pr.md").read_text(encoding="utf-8")
+        section = root_cause_section(current)
+        # never overwrite the reviewer's own text unless asked to
+        if cause and (
+            agent_cause or TODO_MARKER in section
+            or copies_hypothesis(section, meta.get("hypothesis") or "")
+        ):
+            (pkg / "pr.md").write_bytes(with_agent_cause(current, cause).encode("utf-8"))
+            meta["root_cause_mode"] = "agent"
     root = Path(meta["workdir"])
     if not root.is_dir():
         raise PackageError(f"the work clone is gone: {root}")
@@ -172,7 +189,9 @@ def repackage(
     )
     style.extend(syntax_findings(root, files))
     style.extend(unused_import_findings(root, diff))
-    style.extend(changelog_findings(root, files))
+    cl_kind = ((meta.get("conventions") or {}).get("stats") or {}).get("changelog", {}).get("kind")
+    if cl_kind != "none":
+        style.extend(changelog_findings(root, files))
     style.extend(new_test_findings(meta.get("conventions"), root, base, files, meta["issue"]))
     style.extend(lint_findings)
     if hooks_not_run:

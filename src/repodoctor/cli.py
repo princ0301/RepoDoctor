@@ -953,6 +953,13 @@ def _review_flow(pkg: Path, settings: Settings) -> None:
     if blocking_findings(meta):
         typer.echo("\nThis package cannot be approved: see the [skip] findings above.")
         raise typer.Exit(1)
+    if not meta.get("verification"):
+        typer.echo(
+            "\nNot approvable yet: nothing has re-verified this package. Edit it as a "
+            "contributor would (move the test to where the project keeps its tests, write the "
+            f"changelog entry if it keeps one), then run:\n  uv run repodoctor repackage {pkg}"
+        )
+        return
     typer.echo(
         f"\nEdit {pkg / 'pr.md'} now if you want to change the text. Approval records a hash "
         "of the patch and the text, and any later edit invalidates it."
@@ -1032,12 +1039,16 @@ def repackage_cmd(
     test: str | None = typer.Option(
         None, "--test", help="The new test id, if you moved or renamed the test"
     ),
+    agent_root_cause: bool = typer.Option(
+        False, "--agent-root-cause",
+        help="Replace the Root cause with the agent's explanation (disclosed in the PR text)",
+    ),
 ) -> None:
     """After editing files in the package's clone: rebuild the commit and patch and re-verify."""
     settings = get_settings()
     typer.echo("Re-verifying in the sandbox (install, then three test runs) ...")
     try:
-        meta = repackage_package(package, settings, test_id=test)
+        meta = repackage_package(package, settings, test_id=test, agent_cause=agent_root_cause)
     except (PackageError, GitError, SandboxError) as e:
         typer.echo(f"ERROR   {e}")
         raise typer.Exit(1) from e

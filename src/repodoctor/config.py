@@ -51,10 +51,14 @@ class Settings(BaseSettings):
     prs_dir: Path = Path(".repodoctor/prs")
     pr_max_diff_lines: int = 300
     pr_max_files: int = 8
+    # Third-party repos: your first comment on the issue must be this old (0 = off).
+    pr_min_comment_hours: int = 24
     max_prs_per_day: int = 1
     git_author_name: str = ""     # default: your GitHub username
     git_author_email: str = ""    # default: <username>@users.noreply.github.com
     commit_trailer: str = "Assisted-by: RepoDoctor ({model})"   # empty = no trailer
+
+    root_cause_mode: str = "agent"   # "agent" uses and discloses the agent's explanation
 
     @property
     def allowed_repo_list(self) -> list[str]:

@@ -392,6 +392,7 @@ def fetch_comments_full(client: httpx.Client, ref: IssueRef, limit: int = 100) -
             "login": (c.get("user") or {}).get("login", "?"),
             "body": c.get("body") or "",
             "role": c.get("author_association") or "",
+            "created_at": c.get("created_at") or "",
         }
         for c in data[:limit]
     ]

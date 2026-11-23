@@ -1,5 +1,6 @@
 """Turn a successful run into a reviewable pull-request package on disk. Nothing is pushed."""
 
+import difflib
 import hashlib
 import json
 import re
@@ -31,10 +32,28 @@ from repodoctor.tools.review_hints import changelog_findings
 
 REPODOCTOR_URL = "https://github.com/princ0301/RepoDoctor"
 MIN_ROOT_CAUSE_WORDS = 8
+_LINES = re.compile(
+    r"\s*\(?\b(?:on |at |in )?lines? \d+(?:\s*[-–]\s*\d+)?"
+    r"(?: of [\w./\\-]*\w)?\)?",
+    re.I,
+)
+_SECTION = re.compile(r"^## Root cause[ \t]*\n(.*?)(?=^## |\Z)", re.S | re.M)
 
 
 class PackageError(RuntimeError):
     """The package cannot be prepared or approved."""
+
+
+def tidy_hypothesis(text: str, max_sentences: int = 3) -> str:
+    """The agent's hypothesis without line numbers (they go stale), at most a few sentences."""
+    t = _LINES.sub("", " ".join((text or "").split()))
+    t = re.sub(r"\s+([,.;:])", r"\1", t)
+    return " ".join(re.split(r"(?<=[.!?])\s+", t)[:max_sentences]).strip()
+
+
+def with_agent_cause(text: str, cause: str) -> str:
+    """pr.md with the Root cause section replaced by `cause`."""
+    return _SECTION.sub(lambda m: f"## Root cause\n\n{cause}\n\n", text, count=1)
 
 
 def trailer_text(settings: Settings, model: str) -> str:
@@ -79,7 +98,7 @@ def _issue_test_path(root: Path, old_rel: str, number: int) -> str:
 
 def build_pr_text(
     *, ref: IssueRef, issue: IssueData, final: dict, user: str, test_id: str,
-    template: str = "", facts: dict | None = None, trailer: str = "",
+    template: str = "", facts: dict | None = None, trailer: str = "", agent_cause: str = "",
 ) -> tuple[str, str]:
     title = re.sub(r"^[#>*\-\s]+", "", " ".join(issue.title.split()))[:100] or f"Fix #{ref.number}"
     base = final.get("baseline") or {}
@@ -114,7 +133,8 @@ def build_pr_text(
     ]
     if trailer:
         body += [trailer, ""]
-    return title, "\n".join(body)
+    text = "\n".join(body)
+    return title, (with_agent_cause(text, agent_cause) if agent_cause else text)
 
 
 def prepare_package(
@@ -174,10 +194,12 @@ def prepare_package(
 
     model = settings.llm_fix.partition(":")[2] or settings.llm_fix
     trailer = trailer_text(settings, model)
+    agent_mode = settings.root_cause_mode.strip().lower() == "agent"
+    cause = tidy_hypothesis(final.get("hypothesis") or "") if agent_mode else ""
     title, body = build_pr_text(
         ref=ref, issue=issue, final=final, user=user, test_id=test_id,
         template=(conventions or {}).get("pr_template", ""),
-        trailer=trailer,
+        trailer=trailer, agent_cause=cause,
     )
     author = (
         settings.git_author_name or user,
@@ -196,8 +218,16 @@ def prepare_package(
     )
     style.extend(syntax_findings(clone, paths))
     style.extend(unused_import_findings(clone, diff))
-    style.extend(changelog_findings(clone, paths))
+    cl_kind = ((conventions or {}).get("stats") or {}).get("changelog", {}).get("kind")
+    if cl_kind != "none":   # when past fixes never touch the changelog, a reminder is noise
+        style.extend(changelog_findings(clone, paths))
     style.extend(new_test_findings(conventions, clone, base_sha, paths, ref.number))
+    if cause and (policy_hits or ai_threads):
+        style.add(
+            "warn", "agent_written_description",
+            "The root cause in pr.md was drafted by the agent, and this project's docs or "
+            "threads mention AI: check that AI-written descriptions are allowed there.",
+        )
     style.add(
         "warn", "not_reverified",
         "Lint, the final re-verification and the checklist have not run yet: run repackage.",
@@ -237,6 +267,7 @@ def prepare_package(
         "policy_hits": policy_hits,
         "ai_threads": ai_threads or [],
         "hypothesis": final.get("hypothesis") or "",
+        "root_cause_mode": "agent" if cause else "human",
         "baseline": final.get("baseline"),
         "conventions": conventions,
         "changelog": changelog,
@@ -256,6 +287,22 @@ def blocking_findings(meta: dict) -> list[dict]:
     return [f for f in (*meta["triage"], *meta["style"]) if f["level"] == "skip"]
 
 
+def _words(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9_]+", text.lower())
+
+
+def copies_hypothesis(root_cause: str, hypothesis: str) -> bool:
+    """True when the root cause mostly repeats the agent's hypothesis."""
+    a, b = _words(root_cause), _words(hypothesis)
+    if len(a) < 6 or len(b) < 6:
+        return False
+    mine = {tuple(a[i:i + 5]) for i in range(len(a) - 4)}
+    theirs = {tuple(b[i:i + 5]) for i in range(len(b) - 4)}
+    if mine and len(mine & theirs) / len(mine) >= 0.4:
+        return True
+    return difflib.SequenceMatcher(None, " ".join(a), " ".join(b)).ratio() >= 0.6
+
+
 def approve(pkg: Path, *, policy_acknowledged: bool) -> dict:
     """Record approval together with hashes of the patch and the PR text."""
     meta = load_package(pkg)
@@ -273,12 +320,18 @@ def approve(pkg: Path, *, policy_acknowledged: bool) -> dict:
             f"the patch still contains {TODO_MARKER} (a changelog entry?): write it in the "
             "work clone, then run repackage"
         )
-    words = len(root_cause_section(text).split())
-    if words < MIN_ROOT_CAUSE_WORDS:
-        raise PackageError(
-            f"the 'Root cause' section of pr.md has {words} word(s): write at least "
-            f"{MIN_ROOT_CAUSE_WORDS}, saying why the bug happens in your own words"
-        )
+    if meta.get("root_cause_mode") != "agent":
+        words = len(root_cause_section(text).split())
+        if words < MIN_ROOT_CAUSE_WORDS:
+            raise PackageError(
+                f"the 'Root cause' section of pr.md has {words} word(s): write at least "
+                f"{MIN_ROOT_CAUSE_WORDS}, saying why the bug happens in your own words"
+            )
+        if copies_hypothesis(root_cause_section(text), meta.get("hypothesis") or ""):
+            raise PackageError(
+                "the 'Root cause' section is the agent's own hypothesis, barely reworded: "
+                "write the cause in your own words (and without line numbers, which go stale)"
+            )
     if (meta["policy_hits"] or meta.get("ai_threads")) and not policy_acknowledged:
         raise PackageError(
             "the contribution docs or recent threads mention AI: confirm you read them"
