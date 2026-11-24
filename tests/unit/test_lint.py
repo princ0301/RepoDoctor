@@ -113,3 +113,15 @@ def test_a_tool_that_cannot_run_is_reported_not_fatal(make_git_repo):
     found = run_lint(box, root, [LintTool("flake8", "flake8", None, "lint")], ["a.py"],
                      get_diff_since(root, base), base, head)
     assert [f.code for f in found] == ["lint_unavailable"] and found[0].level == "info"
+
+def test_file_mode_rules_are_ignored_because_the_mount_reports_wrong_modes(make_git_repo):
+    root = make_git_repo({"a.py": "x = 1\n"})
+    base = head_sha(root)
+    (root / "b.py").write_bytes(b"y = 1\n")
+    head = commit_files(root, ["b.py"], "add")
+    box = LintBox({"ruff check": [(1, "b.py:1:1: EXE002 The file is executable\nb.py:1:1: I002 Missing import\n")]})
+    found = run_lint(
+        box, root, [LintTool("ruff-check", "ruff", None, "lint")], ["b.py"],
+        get_diff_since(root, base), base, head,
+    )
+    assert [f.message for f in found] == ["b.py:1: I002 Missing import [ruff-check]"]

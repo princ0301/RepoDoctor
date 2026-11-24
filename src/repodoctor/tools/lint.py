@@ -29,6 +29,7 @@ _HOOKS: dict[str, tuple[str, dict[str, tuple[str, str]]]] = {
     "isort": ("isort", {"isort": ("isort", "format")}),
 }
 _LINT_LINE = re.compile(r"^(?P<path>[^\s:][^:]*):(?P<line>\d+):(?:\d+:)?\s*(?P<msg>\S.*)$")
+_MODE_RULES = ("EXE",)   # depend on file modes, which a Windows bind mount reports wrongly
 
 
 def exists_at(root: Path, rev: str, rel: str) -> bool:
@@ -168,7 +169,10 @@ def run_lint(
                     f"{tool.name} could not run (exit {res.exit_code}); run it yourself.",
                 ))
                 continue
-            hits = [(p, n, m) for p, n, m in parse_lint_output(res.output) if (p, n) in added]
+            hits = [
+                (p, n, m) for p, n, m in parse_lint_output(res.output)
+                if (p, n) in added and not m.startswith(_MODE_RULES)
+            ]
             out += [Finding("warn", "lint", f"{p}:{n}: {m} [{tool.name}]") for p, n, m in hits[:10]]
             continue
         for f in py:

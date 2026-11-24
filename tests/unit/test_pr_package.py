@@ -208,6 +208,7 @@ def test_repackage_runs_the_projects_linters_and_ticks_what_it_verified(
     assert any(f["code"] == "lint" for f in meta["style"]) is (not clean)
     assert not any(f["code"] == "not_reverified" for f in meta["style"])
 
+
 def settings(tmp_path, **over) -> Settings:
     over.setdefault("root_cause_mode", "human")
     return Settings(_env_file=None, github_username="me", prs_dir=tmp_path / "prs", **over)
@@ -585,3 +586,46 @@ def test_repackage_switches_to_the_agents_root_cause_only_when_asked(run, tmp_pa
     text = (pkg / "pr.md").read_text(encoding="utf-8")
     assert meta["root_cause_mode"] == "agent" and "The value is wrong. It fails." in text
     assert custom not in text
+
+def test_tidy_hypothesis_drops_sentences_that_prescribe_the_fix():
+    raw = (
+        "The bug is that `x or None` turns 0 into None. The fix is to check for None "
+        "explicitly. That makes the table fall back to the default."
+    )
+    out = tidy_hypothesis(raw)
+    assert "The fix" not in out and out.startswith("The bug is that") and "fall back" in out
+    only = "The fix is to use is not None."
+    assert tidy_hypothesis(only) == only      # never returns nothing
+
+
+def test_repackage_blocks_a_leftover_generated_test_file(run, tmp_path):
+    pkg = prepare(run, tmp_path)
+    clone = Path(load_package(pkg)["workdir"])
+    (clone / "tests" / "test_app.py").write_text(
+        "def test_ok():\n    assert True\n\n\ndef test_moved():\n    assert True\n", encoding="utf-8"
+    )
+
+    def verify():
+        sb = FakeSandbox(target=[1, 0], suite=SuiteReport(total=3, passed=3))
+        return repackage(
+            pkg, settings(tmp_path), test_id="tests/test_app.py::test_moved",
+            sandbox_factory=lambda _r: sb,
+        )
+
+    assert any(f["code"] == "leftover_generated_test" for f in blocking_findings(verify()))
+    (clone / "tests" / "test_issue_5.py").unlink()
+    assert not any(f["code"] == "leftover_generated_test" for f in blocking_findings(verify()))
+
+def test_the_agent_root_cause_flag_regenerates_even_when_already_in_agent_mode(run, tmp_path):
+    pkg = agent_package(run, tmp_path, "Old cause. It fails.")
+    meta = load_package(pkg)
+    meta["hypothesis"] = "The value is wrong. The fix is to change it. That breaks the check."
+    save_package(pkg, meta)
+    sb = FakeSandbox(target=[1, 0], suite=SuiteReport(total=3, passed=3))
+    repackage(
+        pkg, settings(tmp_path, root_cause_mode="agent"), agent_cause=True,
+        sandbox_factory=lambda _r: sb,
+    )
+    text = (pkg / "pr.md").read_text(encoding="utf-8")
+    assert "The value is wrong. That breaks the check." in text
+    assert "The fix is" not in text and "Old cause" not in text

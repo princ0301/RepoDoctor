@@ -38,17 +38,23 @@ _LINES = re.compile(
     re.I,
 )
 _SECTION = re.compile(r"^## Root cause[ \t]*\n(.*?)(?=^## |\Z)", re.S | re.M)
-
+_FIX_SENTENCE = re.compile(
+    r"^(?:the |a )?(?:proposed |suggested )?(?:fix|solution|remedy|workaround)\b"
+    r"|^to (?:fix|resolve|solve)\b|^(?:we|you|it) (?:should|could|must|need)\b",
+    re.I,
+)
 
 class PackageError(RuntimeError):
     """The package cannot be prepared or approved."""
 
 
 def tidy_hypothesis(text: str, max_sentences: int = 3) -> str:
-    """The agent's hypothesis without line numbers (they go stale), at most a few sentences."""
+    """The agent's hypothesis as a root cause: no line numbers, no prescribed fix, a few sentences."""
     t = _LINES.sub("", " ".join((text or "").split()))
     t = re.sub(r"\s+([,.;:])", r"\1", t)
-    return " ".join(re.split(r"(?<=[.!?])\s+", t)[:max_sentences]).strip()
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", t) if s]
+    kept = [s for s in sentences if not _FIX_SENTENCE.match(s)] or sentences
+    return " ".join(kept[:max_sentences]).strip()
 
 
 def with_agent_cause(text: str, cause: str) -> str:

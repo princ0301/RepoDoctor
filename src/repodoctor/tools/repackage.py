@@ -1,5 +1,6 @@
 """Rebuild a package after the reviewer edited its work clone, and re-verify it."""
 
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,7 +56,7 @@ def repackage(
             "this package was prepared by an older version: run fix-issue --prepare-pr again"
         )
     use_agent = agent_cause or settings.root_cause_mode.strip().lower() == "agent"
-    if use_agent and meta.get("root_cause_mode") != "agent":
+    if use_agent and (agent_cause or meta.get("root_cause_mode") != "agent"):
         cause = tidy_hypothesis(meta.get("hypothesis") or "")
         current = (pkg / "pr.md").read_text(encoding="utf-8")
         section = root_cause_section(current)
@@ -110,6 +111,14 @@ def repackage(
     )
     timeout = settings.sandbox_timeout_s
     findings: list[Finding] = []
+    tid_file = tid.partition("::")[0]
+    for f in files:
+        if f != tid_file and re.fullmatch(rf"(?:.*/)?test_issue_{meta['issue']}(?:_\d+)?\.py", f):
+            findings.append(Finding(
+                "skip", "leftover_generated_test",
+                f"{f} (the agent's generated test) is still in the patch, but your test is in "
+                f"{tid_file}: delete it if you moved the test, or rename it to keep it.",
+            ))
     fails_before: bool | None = None
     without_fix: list[str] = []
     lint_findings: list[Finding] = []
